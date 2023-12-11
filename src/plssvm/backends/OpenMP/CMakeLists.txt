@@ -4,47 +4,49 @@
 ##          See the LICENSE.md file in the project root for full license information.
 ########################################################################################################################
 
+list(APPEND CMAKE_MESSAGE_INDENT "OpenMP:  ")
+
 # check if OpenMP can be enabled
 message(CHECK_START "Checking for OpenMP backend")
 
 find_package(OpenMP)
 
-if(NOT OPENMP_FOUND)
+if (NOT OPENMP_FOUND)
     message(CHECK_FAIL "not found")
-    if(PLSSVM_ENABLE_OPENMP_BACKEND MATCHES "ON")
+    if (PLSSVM_ENABLE_OPENMP_BACKEND MATCHES "ON")
         message(SEND_ERROR "Cannot find requested backend: OpenMP!")
-    endif()
+    endif ()
     return()
-else()
-    if(NOT DEFINED PLSSVM_CPU_TARGET_ARCHS)
-        if(PLSSVM_ENABLE_OPENMP_BACKEND MATCHES "ON")
+else ()
+    if (NOT DEFINED PLSSVM_CPU_TARGET_ARCHS)
+        if (PLSSVM_ENABLE_OPENMP_BACKEND MATCHES "ON")
             message(SEND_ERROR "Found requested OpenMP backend, but no \"cpu\" targets were specified!")
-        else()
+        else ()
             message(STATUS "Found OpenMP backend, but no \"cpu\" targets were specified!")
-        endif()
+        endif ()
         message(CHECK_FAIL "skipped")
         return()
-    endif()
-endif()
-message(CHECK_PASS "found")
+    endif ()
+endif ()
+message(CHECK_PASS "found ")
 
 # explicitly set sources
 set(PLSSVM_OPENMP_SOURCES
-    ${CMAKE_CURRENT_LIST_DIR}/csvm.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/exceptions.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/q_kernel.cpp
-    ${CMAKE_CURRENT_LIST_DIR}/svm_kernel.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/csvm.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/exceptions.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/cg_explicit/blas.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/cg_explicit/kernel_matrix_assembly.cpp
 )
 
 
 # set target properties
 set_local_and_parent(PLSSVM_OPENMP_BACKEND_LIBRARY_NAME plssvm-OpenMP)
-add_library(${PLSSVM_OPENMP_BACKEND_LIBRARY_NAME} STATIC ${PLSSVM_OPENMP_SOURCES})
-target_link_libraries(${PLSSVM_OPENMP_BACKEND_LIBRARY_NAME} PUBLIC OpenMP::OpenMP_CXX)
+add_library(${PLSSVM_OPENMP_BACKEND_LIBRARY_NAME} SHARED ${PLSSVM_OPENMP_SOURCES})
+target_link_libraries(${PLSSVM_OPENMP_BACKEND_LIBRARY_NAME} PRIVATE $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:OpenMP::OpenMP_CXX>)
 # special command line options for MSVC:
 # -openmp:llvm -> enables unsigned loop indexes in OpenMP parallel for loops
 # -openmp:experimental -> enables OpenMP's SIMD instructions
-target_compile_options(${PLSSVM_OPENMP_BACKEND_LIBRARY_NAME} PUBLIC $<$<CXX_COMPILER_ID:MSVC>:-openmp:llvm -openmp:experimental>)
+target_compile_options(${PLSSVM_OPENMP_BACKEND_LIBRARY_NAME} PRIVATE $<$<CXX_COMPILER_ID:MSVC>:-openmp:llvm -openmp:experimental>)
 
 # link base library against OpenMP library
 target_link_libraries(${PLSSVM_OPENMP_BACKEND_LIBRARY_NAME} PUBLIC ${PLSSVM_BASE_LIBRARY_NAME})
@@ -61,4 +63,6 @@ set(PLSSVM_TARGETS_TO_INSTALL ${PLSSVM_TARGETS_TO_INSTALL} PARENT_SCOPE)
 
 
 # generate summary string
-set(PLSSVM_OPENMP_BACKEND_SUMMARY_STRING " - OpenMP: cpu" PARENT_SCOPE)
+set(PLSSVM_OPENMP_BACKEND_SUMMARY_STRING " - OpenMP: cpu " PARENT_SCOPE)
+
+list(POP_BACK CMAKE_MESSAGE_INDENT)

@@ -12,41 +12,33 @@
 #include "plssvm/backends/OpenCL/detail/error_code.hpp"     // plssvm::opencl::detail::error_code
 #include "plssvm/backends/OpenCL/detail/utility.hpp"        // PLSSVM_OPENCL_ERROR_CHECK
 #include "plssvm/backends/OpenCL/exceptions.hpp"            // plssvm::opencl::backend_exception
+#include "plssvm/backends/gpu_device_ptr.hpp"               // plssvm::detail::gpu_device_ptr
 #include "plssvm/detail/assert.hpp"                         // PLSSVM_ASSERT
 
 #include "CL/cl.h"     // CL_MEM_READ_WRITE, CL_TRUE, clFinish, clCreateBuffer, clReleaseMemObject, clEnqueueFillBuffer, clEnqueueWriteBuffer, clEnqueueReadBuffer
 #include "fmt/core.h"  // fmt::format
 
-#include <algorithm>    // std::min
-#include <map>          // std::map
-#include <string>       // std::string
-#include <string_view>  // std::string_view
-#include <utility>      // std::exchange, std::move, std::swap
-#include <vector>       // std::vector
+#include <algorithm>  // std::min
+#include <array>      // std::array
 
 namespace plssvm::opencl::detail {
 
 template <typename T>
-device_ptr<T>::device_ptr(const size_type size, cl_command_queue &queue) :
-    queue_{ queue }, size_{ size } {
-    error_code err;
-    cl_context cont;
-    PLSSVM_OPENCL_ERROR_CHECK(clGetCommandQueueInfo(queue, CL_QUEUE_CONTEXT, sizeof(cl_context), &cont, nullptr));
-    data_ = clCreateBuffer(cont, CL_MEM_READ_WRITE, size_ * sizeof(value_type), nullptr, &err);
+device_ptr<T>::device_ptr(const size_type size, const command_queue &queue) :
+    device_ptr{ { size, 0 }, { 0, 0 }, queue } { }
+
+template <typename T>
+device_ptr<T>::device_ptr(const std::array<size_type, 2> extents, const command_queue &queue) :
+    device_ptr{ extents, { 0, 0 }, queue } { }
+
+template <typename T>
+device_ptr<T>::device_ptr(const std::array<size_type, 2> extents, std::array<size_type, 2> padding, const command_queue &queue) :
+    base_type{ extents, padding, &queue } {
+    error_code err{};
+    cl_context cont{};
+    PLSSVM_OPENCL_ERROR_CHECK(clGetCommandQueueInfo(queue_->queue, CL_QUEUE_CONTEXT, sizeof(cl_context), &cont, nullptr));
+    data_ = clCreateBuffer(cont, CL_MEM_READ_WRITE, this->size() * sizeof(value_type), nullptr, &err);
     PLSSVM_OPENCL_ERROR_CHECK(err);
-}
-
-template <typename T>
-device_ptr<T>::device_ptr(device_ptr &&other) noexcept :
-    queue_{ other.queue_ },
-    data_{ std::exchange(other.data_, nullptr) },
-    size_{ std::exchange(other.size_, 0) } {}
-
-template <typename T>
-device_ptr<T> &device_ptr<T>::operator=(device_ptr &&other) noexcept {
-    device_ptr tmp{ std::move(other) };
-    this->swap(tmp);
-    return *this;
 }
 
 template <typename T>
@@ -57,96 +49,58 @@ device_ptr<T>::~device_ptr() {
 }
 
 template <typename T>
-void device_ptr<T>::swap(device_ptr &other) noexcept {
-    std::swap(queue_, other.queue_);
-    std::swap(data_, other.data_);
-    std::swap(size_, other.size_);
-}
+void device_ptr<T>::memset(const int pattern, const size_type pos, const size_type num_bytes) {
+    PLSSVM_ASSERT(data_ != nullptr, "Invalid data pointer! Maybe *this has been default constructed?");
 
-template <typename T>
-void device_ptr<T>::memset(const value_type value, const size_type pos) {
-    PLSSVM_ASSERT(data_ != nullptr, "Invalid data pointer!");
-
-    this->memset(value, pos, size_);
-}
-template <typename T>
-void device_ptr<T>::memset(const value_type value, const size_type pos, const size_type count) {
-    PLSSVM_ASSERT(data_ != nullptr, "Invalid data pointer!");
-
-    if (pos >= size_) {
-        throw backend_exception{ fmt::format("Illegal access in memset!: {} >= {}", pos, size_) };
+    if (pos >= this->size()) {
+        throw backend_exception{ fmt::format("Illegal access in memset!: {} >= {}", pos, this->size()) };
     }
-    const size_type rcount = std::min(count, size_ - pos);
+    const size_type rnum_bytes = std::min(num_bytes, (this->size() - pos) * sizeof(value_type));
     error_code err;
-    err = clEnqueueFillBuffer(queue_, data_, &value, sizeof(value_type), pos * sizeof(value_type), rcount * sizeof(value_type), 0, nullptr, nullptr);
+    const auto correct_value = static_cast<unsigned char>(pattern);
+    err = clEnqueueFillBuffer(queue_->queue, data_, &correct_value, sizeof(unsigned char), pos * sizeof(value_type), rnum_bytes, 0, nullptr, nullptr);
     PLSSVM_OPENCL_ERROR_CHECK(err);
-    PLSSVM_OPENCL_ERROR_CHECK(clFinish(queue_));
+    PLSSVM_OPENCL_ERROR_CHECK(clFinish(queue_->queue));
 }
 
 template <typename T>
-void device_ptr<T>::memcpy_to_device(const std::vector<value_type> &data_to_copy) {
-    PLSSVM_ASSERT(data_ != nullptr, "Invalid data pointer!");
+void device_ptr<T>::fill(const value_type value, const size_type pos, const size_type count) {
+    PLSSVM_ASSERT(data_ != nullptr, "Invalid data pointer! Maybe *this has been default constructed?");
 
-    this->memcpy_to_device(data_to_copy, 0, size_);
-}
-template <typename T>
-void device_ptr<T>::memcpy_to_device(const std::vector<value_type> &data_to_copy, const size_type pos, const size_type count) {
-    PLSSVM_ASSERT(data_ != nullptr, "Invalid data pointer!");
-
-    const size_type rcount = std::min(count, size_ - pos);
-    if (data_to_copy.size() < rcount) {
-        throw backend_exception{ fmt::format("Too few data to perform memcpy (needed: {}, provided: {})!", rcount, data_to_copy.size()) };
+    if (pos >= this->size()) {
+        throw backend_exception{ fmt::format("Illegal access in fill!: {} >= {}", pos, this->size()) };
     }
-    this->memcpy_to_device(data_to_copy.data(), pos, rcount);
-}
-template <typename T>
-void device_ptr<T>::memcpy_to_device(const_pointer data_to_copy) {
-    PLSSVM_ASSERT(data_ != nullptr, "Invalid data pointer!");
 
-    this->memcpy_to_device(data_to_copy, 0, size_);
-}
-template <typename T>
-void device_ptr<T>::memcpy_to_device(const_pointer data_to_copy, const size_type pos, const size_type count) {
-    PLSSVM_ASSERT(data_ != nullptr, "Invalid data pointer!");
-
-    const size_type rcount = std::min(count, size_ - pos);
+    // run GPU kernel
+    const size_type rcount = std::min(count, this->size() - pos);
     error_code err;
-    err = clEnqueueWriteBuffer(queue_, data_, CL_TRUE, pos * sizeof(value_type), rcount * sizeof(value_type), data_to_copy, 0, nullptr, nullptr);
+    err = clEnqueueFillBuffer(queue_->queue, data_, &value, sizeof(value_type), pos * sizeof(value_type), rcount * sizeof(value_type), 0, nullptr, nullptr);
     PLSSVM_OPENCL_ERROR_CHECK(err);
-    PLSSVM_OPENCL_ERROR_CHECK(clFinish(queue_));
+    PLSSVM_OPENCL_ERROR_CHECK(clFinish(queue_->queue));
 }
 
 template <typename T>
-void device_ptr<T>::memcpy_to_host(std::vector<value_type> &buffer) const {
-    PLSSVM_ASSERT(data_ != nullptr, "Invalid data pointer!");
+void device_ptr<T>::copy_to_device(const_host_pointer_type data_to_copy, const size_type pos, const size_type count) {
+    PLSSVM_ASSERT(data_ != nullptr, "Invalid data pointer! Maybe *this has been default constructed?");
+    PLSSVM_ASSERT(data_to_copy != nullptr, "Invalid host pointer for the data to copy!");
 
-    this->memcpy_to_host(buffer, 0, size_);
-}
-template <typename T>
-void device_ptr<T>::memcpy_to_host(std::vector<value_type> &buffer, const size_type pos, const size_type count) const {
-    PLSSVM_ASSERT(data_ != nullptr, "Invalid data pointer!");
-
-    const size_type rcount = std::min(count, size_ - pos);
-    if (buffer.size() < rcount) {
-        throw backend_exception{ fmt::format("Buffer too small to perform memcpy (needed: {}, provided: {})!", rcount, buffer.size()) };
-    }
-    this->memcpy_to_host(buffer.data(), pos, rcount);
-}
-template <typename T>
-void device_ptr<T>::memcpy_to_host(pointer buffer) const {
-    PLSSVM_ASSERT(data_ != nullptr, "Invalid data pointer!");
-
-    this->memcpy_to_host(buffer, 0, size_);
-}
-template <typename T>
-void device_ptr<T>::memcpy_to_host(pointer buffer, const size_type pos, const size_type count) const {
-    PLSSVM_ASSERT(data_ != nullptr, "Invalid data pointer!");
-
-    const size_type rcount = std::min(count, size_ - pos);
+    const size_type rcount = std::min(count, this->size() - pos);
     error_code err;
-    err = clEnqueueReadBuffer(queue_, data_, CL_TRUE, pos * sizeof(value_type), rcount * sizeof(value_type), buffer, 0, nullptr, nullptr);
+    err = clEnqueueWriteBuffer(queue_->queue, data_, CL_TRUE, pos * sizeof(value_type), rcount * sizeof(value_type), data_to_copy, 0, nullptr, nullptr);
     PLSSVM_OPENCL_ERROR_CHECK(err);
-    PLSSVM_OPENCL_ERROR_CHECK(clFinish(queue_));
+    PLSSVM_OPENCL_ERROR_CHECK(clFinish(queue_->queue));
+}
+
+template <typename T>
+void device_ptr<T>::copy_to_host(host_pointer_type buffer, const size_type pos, const size_type count) const {
+    PLSSVM_ASSERT(data_ != nullptr, "Invalid data pointer! Maybe *this has been default constructed?");
+    PLSSVM_ASSERT(buffer != nullptr, "Invalid host pointer for the data to copy!");
+
+    const size_type rcount = std::min(count, this->size() - pos);
+    error_code err;
+    err = clEnqueueReadBuffer(queue_->queue, data_, CL_TRUE, pos * sizeof(value_type), rcount * sizeof(value_type), buffer, 0, nullptr, nullptr);
+    PLSSVM_OPENCL_ERROR_CHECK(err);
+    PLSSVM_OPENCL_ERROR_CHECK(clFinish(queue_->queue));
 }
 
 template class device_ptr<float>;

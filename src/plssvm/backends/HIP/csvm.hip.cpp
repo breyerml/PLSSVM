@@ -8,172 +8,274 @@
 
 #include "plssvm/backends/HIP/csvm.hpp"
 
-#include "plssvm/backends/HIP/detail/device_ptr.hip.hpp"  // plssvm::hip::detail::device_ptr
-#include "plssvm/backends/HIP/detail/utility.hip.hpp"     // plssvm::hip::detail::device_synchronize, plssvm::detail::hip::get_device_count, plssvm::detail::hip::set_device, plssvm::detail::hip::peek_at_last_error
-#include "plssvm/backends/HIP/exceptions.hpp"             // plssvm::hip::backend_exception
-#include "plssvm/backends/HIP/predict_kernel.hip.hpp"     // plssvm::hip::kernel_w, plssvm::hip::predict_points_poly, plssvm::hip::predict_points_rbf
-#include "plssvm/backends/HIP/q_kernel.hip.hpp"           // plssvm::hip::device_kernel_q_linear, plssvm::hip::device_kernel_q_poly, plssvm::hip::device_kernel_q_radial
-#include "plssvm/backends/HIP/svm_kernel.hip.hpp"         // plssvm::hip::device_kernel_linear, plssvm::hip::device_kernel_poly, plssvm::hip::device_kernel_radial
-#include "plssvm/backends/gpu_csvm.hpp"                   // plssvm::detail::gpu_csvm
-#include "plssvm/detail/assert.hpp"                       // PLSSVM_ASSERT
-#include "plssvm/detail/execution_range.hpp"              // plssvm::detail::execution_range
-#include "plssvm/exceptions/exceptions.hpp"               // plssvm::exception
-#include "plssvm/kernel_types.hpp"                        // plssvm::kernel_type
-#include "plssvm/parameter.hpp"                           // plssvm::parameter
-#include "plssvm/target_platforms.hpp"                    // plssvm::target_platform
+#include "plssvm/backend_types.hpp"                                        // plssvm::backend_type
+#include "plssvm/backends/HIP/cg_explicit/blas.hip.hpp"                    // plssvm::hip::device_kernel_gemm
+#include "plssvm/backends/HIP/cg_explicit/kernel_matrix_assembly.hip.hpp"  // plssvm::hip::{device_kernel_assembly_linear, device_kernel_assembly_polynomial, device_kernel_assembly_rbf}
+#include "plssvm/backends/HIP/detail/device_ptr.hip.hpp"                   // plssvm::hip::detail::device_ptr
+#include "plssvm/backends/HIP/detail/utility.hip.hpp"                      // plssvm::hip::detail::{device_synchronize, get_device_count, set_device, peek_at_last_error}
+#include "plssvm/backends/HIP/exceptions.hpp"                              // plssvm::hip::backend_exception
+#include "plssvm/backends/HIP/predict_kernel.hip.hpp"                      // plssvm::hip::detail::{device_kernel_w_linear, device_kernel_predict_polynomial, device_kernel_predict_rbf}
+#include "plssvm/constants.hpp"                                            // plssvm::{real_type, THREAD_BLOCK_SIZE, INTERNAL_BLOCK_SIZE, PADDING_SIZE}
+#include "plssvm/detail/assert.hpp"                                        // PLSSVM_ASSERT
+#include "plssvm/detail/logging.hpp"                                       // plssvm::detail::log
+#include "plssvm/detail/memory_size.hpp"                                   // plssvm::detail::memory_size
+#include "plssvm/detail/performance_tracker.hpp"                           // plssvm::detail::tracking_entry
+#include "plssvm/exceptions/exceptions.hpp"                                // plssvm::exception
+#include "plssvm/kernel_function_types.hpp"                                // plssvm::kernel_function_type
+#include "plssvm/parameter.hpp"                                            // plssvm::parameter, plssvm::detail::parameter
+#include "plssvm/target_platforms.hpp"                                     // plssvm::target_platform
+#include "plssvm/verbosity_levels.hpp"                                     // plssvm::verbosity_level
 
-#include "hip/hip_runtime_api.h"
+#include "hip/hip_runtime_api.h"  // HIP runtime functions
 
-#include "fmt/core.h"     // fmt::print, fmt::format
+#include "fmt/color.h"    // fmt::fg, fmt::color::orange
+#include "fmt/core.h"     // fmt::format
 #include "fmt/ostream.h"  // can use fmt using operator<< overloads
 
+#include <cstddef>    // std::size_t
 #include <exception>  // std::terminate
+#include <iostream>   // std::cout, std::endl
 #include <numeric>    // std::iota
 #include <utility>    // std::pair, std::make_pair
-#include <vector>     // std::vector
 
 namespace plssvm::hip {
 
-template <typename T>
-csvm<T>::csvm(const parameter<T> &params) :
+csvm::csvm(parameter params) :
+    csvm{ plssvm::target_platform::automatic, params } {}
+
+csvm::csvm(target_platform target, parameter params) :
     base_type{ params } {
+    this->init(target);
+}
+
+void csvm::init(const target_platform target) {
     // check if supported target platform has been selected
-    if (target_ != target_platform::automatic && target_ != target_platform::gpu_amd) {
-        throw backend_exception{ fmt::format("Invalid target platform '{}' for the HIP backend!", target_) };
+    if (target != target_platform::automatic && target != target_platform::gpu_amd) {
+        throw backend_exception{ fmt::format("Invalid target platform '{}' for the HIP backend!", target) };
     } else {
 #if !defined(PLSSVM_HAS_AMD_TARGET)
-        throw backend_exception{ fmt::format("Requested target platform {} that hasn't been enabled using PLSSVM_TARGET_PLATFORMS!", target_) };
+        throw backend_exception{ fmt::format("Requested target platform 'gpu_amd' that hasn't been enabled using PLSSVM_TARGET_PLATFORMS!", target) };
 #endif
     }
 
-    if (print_info_) {
-        fmt::print("Using HIP as backend.\n");
-    }
+    plssvm::detail::log(verbosity_level::full,
+                        "\nUsing HIP as backend.\n");
+    PLSSVM_DETAIL_PERFORMANCE_TRACKER_ADD_TRACKING_ENTRY((plssvm::detail::tracking_entry{ "backend", "backend", plssvm::backend_type::hip }));
+    PLSSVM_DETAIL_PERFORMANCE_TRACKER_ADD_TRACKING_ENTRY((plssvm::detail::tracking_entry{ "backend", "target_platform", plssvm::target_platform::gpu_amd }));
+
+    // update the target platform
+    target_ = plssvm::target_platform::gpu_amd;
 
     // get all available devices wrt the requested target platform
-    devices_.resize(std::min<std::size_t>(detail::get_device_count(), num_features_));
+    devices_.resize(detail::get_device_count());
     std::iota(devices_.begin(), devices_.end(), 0);
 
-    // throw exception if no HIP devices could be found
-    if (devices_.empty()) {
-        throw backend_exception{ "HIP backend selected but no HIP devices were found!" };
-    }
-
-    // polynomial and rbf kernel currently only support single GPU execution
-    if (kernel_ == kernel_type::polynomial || kernel_ == kernel_type::rbf) {
+    // currently only single GPU execution is supported
+    if (devices_.size() > 1) {
+        plssvm::detail::log(verbosity_level::full | verbosity_level::warning,
+                            "WARNING: found {} devices, but currently only single GPU execution is supported. Continuing only with device 0!\n",
+                            devices_.size());
         devices_.resize(1);
     }
 
-    // resize vectors accordingly
-    data_d_.resize(devices_.size());
-    data_last_d_.resize(devices_.size());
-
-    if (print_info_) {
-        // print found HIP devices
-        fmt::print("Found {} HIP device(s):\n", devices_.size());
-        for (typename std::vector<queue_type>::size_type device = 0; device < devices_.size(); ++device) {
-            hipDeviceProp_t prop{};
-            PLSSVM_HIP_ERROR_CHECK(hipGetDeviceProperties(&prop, devices_[device]));
-            fmt::print("  [{}, {}, {}.{}]\n", devices_[device], prop.name, prop.major, prop.minor);
-        }
-        fmt::print("\n");
+    // throw exception if no HIP devices could be found
+    if (devices_.empty()) {
+        throw backend_exception{ "HIP backend selected but no HIP capable devices were found!" };
     }
+
+    // print found HIP devices
+    plssvm::detail::log(verbosity_level::full,
+                        "Found {} HIP device(s):\n",
+                        plssvm::detail::tracking_entry{ "backend", "num_devices", devices_.size() });
+    std::vector<std::string> device_names;
+    device_names.reserve(devices_.size());
+    for (const queue_type &device : devices_) {
+        hipDeviceProp_t prop{};
+        PLSSVM_HIP_ERROR_CHECK(hipGetDeviceProperties(&prop, device));
+        plssvm::detail::log(verbosity_level::full,
+                            "  [{}, {}, {}.{}]\n",
+                            device,
+                            prop.name,
+                            prop.major,
+                            prop.minor);
+        device_names.emplace_back(prop.name);
+    }
+    PLSSVM_DETAIL_PERFORMANCE_TRACKER_ADD_TRACKING_ENTRY((plssvm::detail::tracking_entry{ "backend", "device", device_names }));
+    plssvm::detail::log(verbosity_level::full | verbosity_level::timing,
+                        "\n");
 }
 
-template <typename T>
-csvm<T>::~csvm() {
+csvm::~csvm() {
     try {
         // be sure that all operations on the HIP devices have finished before destruction
         for (const queue_type &device : devices_) {
             detail::device_synchronize(device);
         }
     } catch (const plssvm::exception &e) {
-        fmt::print("{}\n", e.what_with_loc());
+        std::cout << e.what_with_loc() << std::endl;
         std::terminate();
     }
 }
 
-template <typename T>
-void csvm<T>::device_synchronize(queue_type &queue) {
+void csvm::device_synchronize(const queue_type &queue) const {
     detail::device_synchronize(queue);
 }
 
-std::pair<dim3, dim3> execution_range_to_native(const ::plssvm::detail::execution_range &range) {
-    dim3 grid(range.grid[0], range.grid[1], range.grid[2]);
-    dim3 block(range.block[0], range.block[1], range.block[2]);
-    return std::make_pair(grid, block);
+::plssvm::detail::memory_size csvm::get_device_memory() const {
+    hipDeviceProp_t prop{};
+    PLSSVM_HIP_ERROR_CHECK(hipGetDeviceProperties(&prop, devices_[0]));
+    return ::plssvm::detail::memory_size{ static_cast<unsigned long long>(prop.totalGlobalMem) };
 }
 
-template <typename T>
-void csvm<T>::run_q_kernel(const std::size_t device, const ::plssvm::detail::execution_range &range, device_ptr_type &q_d, const std::size_t num_features) {
-    auto [grid, block] = execution_range_to_native(range);
+::plssvm::detail::memory_size csvm::get_max_mem_alloc_size() const {
+    return this->get_device_memory();
+}
 
-    detail::set_device(device);
-    switch (kernel_) {
-        case kernel_type::linear:
-            hip::device_kernel_q_linear<<<grid, block>>>(q_d.get(), data_d_[device].get(), data_last_d_[device].get(), num_rows_, num_features);
-            break;
-        case kernel_type::polynomial:
-            PLSSVM_ASSERT(device == 0, "The polynomial kernel function currently only supports single GPU execution!");
-            hip::device_kernel_q_poly<<<grid, block>>>(q_d.get(), data_d_[device].get(), data_last_d_[device].get(), num_rows_, num_cols_, degree_, gamma_, coef0_);
-            break;
-        case kernel_type::rbf:
-            PLSSVM_ASSERT(device == 0, "The radial basis function kernel function currently only supports single GPU execution!");
-            hip::device_kernel_q_radial<<<grid, block>>>(q_d.get(), data_d_[device].get(), data_last_d_[device].get(), num_rows_, num_cols_, gamma_);
-            break;
+std::size_t csvm::get_max_work_group_size() const {
+    hipDeviceProp_t prop{};
+    PLSSVM_HIP_ERROR_CHECK(hipGetDeviceProperties(&prop, devices_[0]));
+    return static_cast<std::size_t>(prop.maxThreadsPerBlock);
+}
+
+//***************************************************//
+//                        fit                        //
+//***************************************************//
+
+auto csvm::run_assemble_kernel_matrix_explicit(const parameter &params, const device_ptr_type &data_d, const device_ptr_type &q_red_d, real_type QA_cost) const -> device_ptr_type {
+    const unsigned long long num_rows_reduced = data_d.size(0) - 1;
+    const unsigned long long num_features = data_d.size(1);
+
+    // define grid and block sizes
+    const std::size_t max_work_group_size = this->get_max_work_group_size();
+    if (max_work_group_size < THREAD_BLOCK_SIZE * THREAD_BLOCK_SIZE) {
+        throw kernel_launch_resources{ fmt::format("Not enough work-items allowed for a work-groups of size {}x{}! Try reducing THREAD_BLOCK_SIZE.", THREAD_BLOCK_SIZE, THREAD_BLOCK_SIZE) };
     }
-    detail::peek_at_last_error();
-}
+    const dim3 block(THREAD_BLOCK_SIZE, THREAD_BLOCK_SIZE);
+    const dim3 grid(static_cast<int>(std::ceil(static_cast<double>(num_rows_reduced) / static_cast<double>(block.x * INTERNAL_BLOCK_SIZE))),
+                    static_cast<int>(std::ceil(static_cast<double>(num_rows_reduced) / static_cast<double>(block.y * INTERNAL_BLOCK_SIZE))));
 
-template <typename T>
-void csvm<T>::run_svm_kernel(const std::size_t device, const ::plssvm::detail::execution_range &range, const device_ptr_type &q_d, device_ptr_type &r_d, const device_ptr_type &x_d, const real_type add, const std::size_t num_features) {
-    auto [grid, block] = execution_range_to_native(range);
-
-    detail::set_device(device);
-    switch (kernel_) {
-        case kernel_type::linear:
-            hip::device_kernel_linear<<<grid, block>>>(q_d.get(), r_d.get(), x_d.get(), data_d_[device].get(), QA_cost_, 1 / cost_, num_rows_, num_features, add, device);
-            break;
-        case kernel_type::polynomial:
-            PLSSVM_ASSERT(device == 0, "The polynomial kernel function currently only supports single GPU execution!");
-            hip::device_kernel_poly<<<grid, block>>>(q_d.get(), r_d.get(), x_d.get(), data_d_[device].get(), QA_cost_, 1 / cost_, num_rows_, num_cols_, add, degree_, gamma_, coef0_);
-            break;
-        case kernel_type::rbf:
-            PLSSVM_ASSERT(device == 0, "The radial basis function kernel function currently only supports single GPU execution!");
-            hip::device_kernel_radial<<<grid, block>>>(q_d.get(), r_d.get(), x_d.get(), data_d_[device].get(), QA_cost_, 1 / cost_, num_rows_, num_cols_, add, gamma_);
-            break;
-    }
-    detail::peek_at_last_error();
-}
-
-template <typename T>
-void csvm<T>::run_w_kernel(const std::size_t device, const ::plssvm::detail::execution_range &range, device_ptr_type &w_d, const device_ptr_type &alpha_d, const std::size_t num_features) {
-    auto [grid, block] = execution_range_to_native(range);
-
-    detail::set_device(device);
-    hip::device_kernel_w_linear<<<grid, block>>>(w_d.get(), data_d_[device].get(), data_last_d_[device].get(), alpha_d.get(), num_data_points_, num_features);
-    detail::peek_at_last_error();
-}
-
-template <typename T>
-void csvm<T>::run_predict_kernel(const ::plssvm::detail::execution_range &range, device_ptr_type &out_d, const device_ptr_type &alpha_d, const device_ptr_type &point_d, const std::size_t num_predict_points) {
-    auto [grid, block] = execution_range_to_native(range);
+#if defined(PLSSVM_USE_GEMM)
+    device_ptr_type kernel_matrix_d{ (num_rows_reduced + PADDING_SIZE) * (num_rows_reduced + PADDING_SIZE), devices_[0] };  // store full matrix
+#else
+    device_ptr_type kernel_matrix_d{ (num_rows_reduced + PADDING_SIZE) * (num_rows_reduced + PADDING_SIZE + 1) / 2, devices_[0] };  // only explicitly store the upper triangular matrix
+#endif
+    kernel_matrix_d.memset(0);
+    const real_type cost_factor = real_type{ 1.0 } / params.cost;
 
     detail::set_device(0);
-    switch (kernel_) {
-        case kernel_type::linear:
+    switch (params.kernel_type) {
+        case kernel_function_type::linear:
+            hip::device_kernel_assembly_linear<<<grid, block>>>(kernel_matrix_d.get(), data_d.get(), num_rows_reduced, num_features, q_red_d.get(), QA_cost, cost_factor);
             break;
-        case kernel_type::polynomial:
-            hip::device_kernel_predict_poly<<<grid, block>>>(out_d.get(), data_d_[0].get(), data_last_d_[0].get(), alpha_d.get(), num_data_points_, point_d.get(), num_predict_points, num_features_, degree_, gamma_, coef0_);
+        case kernel_function_type::polynomial:
+            hip::device_kernel_assembly_polynomial<<<grid, block>>>(kernel_matrix_d.get(), data_d.get(), num_rows_reduced, num_features, q_red_d.get(), QA_cost, cost_factor, params.degree.value(), params.gamma.value(), params.coef0.value());
             break;
-        case kernel_type::rbf:
-            hip::device_kernel_predict_radial<<<grid, block>>>(out_d.get(), data_d_[0].get(), data_last_d_[0].get(), alpha_d.get(), num_data_points_, point_d.get(), num_predict_points, num_features_, gamma_);
+        case kernel_function_type::rbf:
+            hip::device_kernel_assembly_rbf<<<grid, block>>>(kernel_matrix_d.get(), data_d.get(), num_rows_reduced, num_features, q_red_d.get(), QA_cost, cost_factor, params.gamma.value());
             break;
     }
     detail::peek_at_last_error();
+    this->device_synchronize(devices_[0]);
+
+    return kernel_matrix_d;
 }
 
-template class csvm<float>;
-template class csvm<double>;
+void csvm::run_blas_level_3_kernel_explicit(const std::size_t m, const std::size_t n, const std::size_t k, const real_type alpha, const device_ptr_type &A_d, const device_ptr_type &B_d, const real_type beta, device_ptr_type &C_d) const {
+    // define the grid and block sizes
+    const std::size_t max_work_group_size = this->get_max_work_group_size();
+    if (max_work_group_size < THREAD_BLOCK_SIZE * THREAD_BLOCK_SIZE) {
+        throw kernel_launch_resources{ fmt::format("Not enough work-items allowed for a work-groups of size {}x{}! Try reducing THREAD_BLOCK_SIZE.", THREAD_BLOCK_SIZE, THREAD_BLOCK_SIZE) };
+    }
+    const dim3 block(THREAD_BLOCK_SIZE, THREAD_BLOCK_SIZE);
+    const dim3 grid(static_cast<int>(std::ceil(static_cast<double>(n) / static_cast<double>(block.x * INTERNAL_BLOCK_SIZE))),
+                    static_cast<int>(std::ceil(static_cast<double>(m) / static_cast<double>(block.y * INTERNAL_BLOCK_SIZE))));
+
+    // cast to correct type
+    const auto m_ull = static_cast<unsigned long long>(m);
+    const auto n_ull = static_cast<unsigned long long>(n);
+    const auto k_ull = static_cast<unsigned long long>(k);
+
+    detail::set_device(0);
+#if defined(PLSSVM_USE_GEMM)
+    hip::device_kernel_gemm<<<grid, block>>>(m_ull, n_ull, k_ull, alpha, A_d.get(), B_d.get(), beta, C_d.get());
+#else
+    hip::device_kernel_symm<<<grid, block>>>(m_ull, n_ull, k_ull, alpha, A_d.get(), B_d.get(), beta, C_d.get());
+#endif
+    detail::peek_at_last_error();
+    this->device_synchronize(devices_[0]);
+}
+
+//***************************************************//
+//                   predict, score                  //
+//***************************************************//
+
+auto csvm::run_w_kernel(const device_ptr_type &alpha_d, const device_ptr_type &sv_d) const -> device_ptr_type {
+    const unsigned long long num_classes = alpha_d.size(0);
+    const unsigned long long num_sv = sv_d.size(0);
+    const unsigned long long num_features = sv_d.size(1);
+
+    // define the grid and block sizes
+    const std::size_t max_work_group_size = this->get_max_work_group_size();
+    if (max_work_group_size < THREAD_BLOCK_SIZE * THREAD_BLOCK_SIZE) {
+        throw kernel_launch_resources{ fmt::format("Not enough work-items allowed for a work-groups of size {}x{}! Try reducing THREAD_BLOCK_SIZE.", THREAD_BLOCK_SIZE, THREAD_BLOCK_SIZE) };
+    }
+    const dim3 block(THREAD_BLOCK_SIZE, THREAD_BLOCK_SIZE);
+    const dim3 grid(static_cast<int>(std::ceil(static_cast<double>(num_features) / static_cast<double>(block.x * INTERNAL_BLOCK_SIZE))),
+                    static_cast<int>(std::ceil(static_cast<double>(num_classes) / static_cast<double>(block.y * INTERNAL_BLOCK_SIZE))));
+
+    device_ptr_type w_d{ { num_classes, num_features }, { PADDING_SIZE, PADDING_SIZE }, devices_[0] };
+
+    detail::set_device(0);
+    hip::device_kernel_w_linear<<<grid, block>>>(w_d.get(), alpha_d.get(), sv_d.get(), num_classes, num_sv);
+    detail::peek_at_last_error();
+    this->device_synchronize(devices_[0]);
+
+    return w_d;
+}
+
+auto csvm::run_predict_kernel(const parameter &params, const device_ptr_type &w_d, const device_ptr_type &alpha_d, const device_ptr_type &rho_d, const device_ptr_type &sv_d, const device_ptr_type &predict_points_d) const -> device_ptr_type {
+    const unsigned long long num_classes = alpha_d.size(0);
+    const unsigned long long num_sv = sv_d.size(0);
+    const unsigned long long num_predict_points = predict_points_d.size(0);
+    const unsigned long long num_features = predict_points_d.size(1);
+
+    device_ptr_type out_d{ { num_predict_points, num_classes }, { PADDING_SIZE, PADDING_SIZE }, devices_[0] };
+
+    // define the block sizes
+    const std::size_t max_work_group_size = this->get_max_work_group_size();
+    if (max_work_group_size < THREAD_BLOCK_SIZE * THREAD_BLOCK_SIZE) {
+        throw kernel_launch_resources{ fmt::format("Not enough work-items allowed for a work-groups of size {}x{}! Try reducing THREAD_BLOCK_SIZE.", THREAD_BLOCK_SIZE, THREAD_BLOCK_SIZE) };
+    }
+    const dim3 block(THREAD_BLOCK_SIZE, THREAD_BLOCK_SIZE);
+
+    detail::set_device(0);
+    if (params.kernel_type == kernel_function_type::linear) {
+        // define the grid sizes
+        const dim3 grid(static_cast<int>(std::ceil(static_cast<double>(num_predict_points) / static_cast<double>(block.x * INTERNAL_BLOCK_SIZE))),
+                        static_cast<int>(std::ceil(static_cast<double>(num_classes) / static_cast<double>(block.y * INTERNAL_BLOCK_SIZE))));
+
+        hip::device_kernel_predict_linear<<<grid, block>>>(out_d.get(), w_d.get(), rho_d.get(), predict_points_d.get(), num_classes, num_predict_points, num_features);
+    } else {
+        // define the grid sizes
+        const dim3 grid(static_cast<int>(std::ceil(static_cast<double>(num_predict_points) / static_cast<double>(block.x * INTERNAL_BLOCK_SIZE))),
+                        static_cast<int>(std::ceil(static_cast<double>(num_sv) / static_cast<double>(block.y * INTERNAL_BLOCK_SIZE))));
+
+        switch (params.kernel_type) {
+            case kernel_function_type::linear:
+                // already handled
+                break;
+            case kernel_function_type::polynomial:
+                hip::device_kernel_predict_polynomial<<<grid, block>>>(out_d.get(), alpha_d.get(), rho_d.get(), sv_d.get(), predict_points_d.get(), num_classes, num_sv, num_predict_points, num_features, params.degree.value(), params.gamma.value(), params.coef0.value());
+                break;
+            case kernel_function_type::rbf:
+                hip::device_kernel_predict_rbf<<<grid, block>>>(out_d.get(), alpha_d.get(), rho_d.get(), sv_d.get(), predict_points_d.get(), num_classes, num_sv, num_predict_points, num_features, params.gamma.value());
+                break;
+        }
+    }
+    detail::peek_at_last_error();
+    this->device_synchronize(devices_[0]);
+
+    return out_d;
+}
 
 }  // namespace plssvm::hip

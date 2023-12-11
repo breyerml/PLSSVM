@@ -9,6 +9,8 @@
  * @brief Defines a very small RAII wrapper around a cl_command_queue including information about its associated OpenCL context and device.
  */
 
+#ifndef PLSSVM_BACKENDS_OPENCL_DETAIL_COMMAND_QUEUE_HPP_
+#define PLSSVM_BACKENDS_OPENCL_DETAIL_COMMAND_QUEUE_HPP_
 #pragma once
 
 #include "plssvm/backends/OpenCL/detail/kernel.hpp"  // plssvm::opencl::detail::kernel
@@ -54,7 +56,7 @@ class command_queue {
      * @param[in,out] other the command_queue to move the resources from
      * @return `*this`
      */
-    command_queue &operator=(command_queue &&other);
+    command_queue &operator=(command_queue &&other) noexcept;
 
     /**
      * @brief Release the cl_command_queue resources on destruction.
@@ -79,6 +81,14 @@ class command_queue {
      */
     void add_kernel(compute_kernel_name name, kernel &&compute_kernel);
 
+    /**
+     * @brief Get the OpenCL kernel used for @p name.
+     * @param[in] name the name of the kernel
+     * @throws std::out_of_range if a kernel with @p name is requested that has not been compiled for this command queue
+     * @return the compiled kernel (`[[nodiscard]]`)
+     */
+    [[nodiscard]] const kernel &get_kernel(compute_kernel_name name) const;
+
     /// The wrapped cl_command_queue.
     cl_command_queue queue{};
     /// All OpenCL device kernel associated with the device corresponding to this command queue.
@@ -86,3 +96,5 @@ class command_queue {
 };
 
 }  // namespace plssvm::opencl::detail
+
+#endif  // PLSSVM_BACKENDS_OPENCL_DETAIL_COMMAND_QUEUE_HPP_

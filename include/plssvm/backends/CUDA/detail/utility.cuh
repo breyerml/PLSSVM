@@ -9,7 +9,11 @@
  * @brief Utility functions for the CUDA backend.
  */
 
+#ifndef PLSSVM_BACKENDS_CUDA_DETAIL_UTILITY_HPP_
+#define PLSSVM_BACKENDS_CUDA_DETAIL_UTILITY_HPP_
 #pragma once
+
+#include "fmt/ostream.h"  // fmt::formatter, fmt::ostream_formatter
 
 /**
  * @def PLSSVM_CUDA_ERROR_CHECK
@@ -21,7 +25,7 @@ namespace plssvm::cuda::detail {
 
 /**
  * @brief Check the CUDA error @p code. If @p code signals an error, throw a plssvm::cuda::backend_exception.
- * @details The exception contains the error name and error string.
+ * @details The exception contains the following message: "CUDA assert 'CUDA_ERROR_NAME' (CUDA_ERROR_CODE): CUDA_ERROR_STRING".
  * @param[in] code the CUDA error code to check
  * @throws plssvm::cuda::backend_exception if the error code signals a failure
  */
@@ -34,8 +38,9 @@ void gpu_assert(cudaError_t code);
 [[nodiscard]] int get_device_count();
 
 /**
- * @brief Set the device @p device to the active CUDA device.
+ * @brief Set the @p device to the active CUDA device.
  * @param[in] device the now active device
+ * @throws plssvm::cuda::backend_exception if the given device ID is smaller than 0 or greater or equal than the available number of devices
  */
 void set_device(int device);
 
@@ -53,3 +58,8 @@ void peek_at_last_error();
 void device_synchronize(int device);
 
 }  // namespace plssvm::cuda::detail
+
+template <>
+struct fmt::formatter<cudaError_t> : fmt::ostream_formatter {};
+
+#endif  // PLSSVM_BACKENDS_CUDA_DETAIL_UTILITY_HPP_

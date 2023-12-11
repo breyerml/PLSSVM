@@ -9,100 +9,154 @@
  * @brief Defines a C-SVM using the OpenMP backend.
  */
 
+#ifndef PLSSVM_BACKENDS_OPENMP_CSVM_HPP_
+#define PLSSVM_BACKENDS_OPENMP_CSVM_HPP_
 #pragma once
 
-#include "plssvm/csvm.hpp"  // plssvm::csvm
+#include "plssvm/constants.hpp"           // plssvm::real_type
+#include "plssvm/csvm.hpp"                // plssvm::csvm
+#include "plssvm/detail/memory_size.hpp"  // plssvm::detail::memory_size
+#include "plssvm/detail/simple_any.hpp"   // plssvm::detail::simple_any
+#include "plssvm/detail/type_traits.hpp"  // PLSSVM_REQUIRES
+#include "plssvm/matrix.hpp"              // plssvm::aos_matrix
+#include "plssvm/parameter.hpp"           // plssvm::parameter, plssvm::detail::has_only_parameter_named_args_v
+#include "plssvm/target_platforms.hpp"    // plssvm::target_platform
 
-#include <vector>  // std::vector
+#include <type_traits>  // std::true_type
+#include <utility>      // std::forward, std::pair
+#include <vector>       // std::vector
 
 namespace plssvm {
-
-// forward declare parameter class
-template <typename T>
-class parameter;
 
 namespace openmp {
 
 /**
  * @brief A C-SVM implementation using OpenMP as backend.
- * @tparam T the type of the data
  */
-template <typename T>
-class csvm : public ::plssvm::csvm<T> {
-  protected:
-    // protected for test mock class
-    /// The template base type of the OpenMP C-SVM class.
-    using base_type = ::plssvm::csvm<T>;
-    using base_type::alpha_ptr_;
-    using base_type::bias_;
-    using base_type::coef0_;
-    using base_type::cost_;
-    using base_type::data_ptr_;
-    using base_type::degree_;
-    using base_type::gamma_;
-    using base_type::kernel_;
-    using base_type::num_data_points_;
-    using base_type::num_features_;
-    using base_type::print_info_;
-    using base_type::QA_cost_;
-    using base_type::target_;
-    using base_type::w_;
-
+class csvm : public ::plssvm::csvm {
   public:
     /**
-     * @copydoc plssvm::csvm::predict(const std::vector<real_type>&)
-     */
-    using base_type::predict;
-    /// The type of the data. Must be either `float` or `double`.
-    using real_type = typename base_type::real_type;
-
-    /**
      * @brief Construct a new C-SVM using the OpenMP backend with the parameters given through @p params.
-     * @param[in] params struct encapsulating all possible parameters
-     * @throws plssvm::csvm::csvm() exceptions
+     * @param[in] params struct encapsulating all possible SVM parameters
+     * @throws plssvm::exception all exceptions thrown in the base class constructor
      * @throws plssvm::openmp::backend_exception if the target platform isn't plssvm::target_platform::automatic or plssvm::target_platform::cpu
      * @throws plssvm::openmp::backend_exception if the plssvm::target_platform::cpu target isn't available
      */
-    explicit csvm(const parameter<T> &params);
+    explicit csvm(parameter params = {});
+    /**
+     * @brief Construct a new C-SVM using the OpenMP backend on the @p target platform with the parameters given through @p params.
+     * @param[in] target the target platform used for this C-SVM
+     * @param[in] params struct encapsulating all possible SVM parameters
+     * @throws plssvm::exception all exceptions thrown in the base class constructor
+     * @throws plssvm::openmp::backend_exception if the target platform isn't plssvm::target_platform::automatic or plssvm::target_platform::cpu
+     * @throws plssvm::openmp::backend_exception if the plssvm::target_platform::cpu target isn't available
+     */
+    explicit csvm(target_platform target, parameter params = {});
 
     /**
-     * @copydoc plssvm::csvm::predict(const std::vector<std::vector<real_type>>&)
+     * @brief Construct a new C-SVM using the OpenMP backend and the optionally provided @p named_args.
+     * @param[in] named_args the additional optional named-parameters
+     * @throws plssvm::exception all exceptions thrown in the base class constructor
+     * @throws plssvm::openmp::backend_exception if the target platform isn't plssvm::target_platform::automatic or plssvm::target_platform::cpu
+     * @throws plssvm::openmp::backend_exception if the plssvm::target_platform::cpu target isn't available
      */
-    [[nodiscard]] std::vector<real_type> predict(const std::vector<std::vector<real_type>> &points) override;
+    template <typename... Args, PLSSVM_REQUIRES(detail::has_only_parameter_named_args_v<Args...>)>
+    explicit csvm(Args &&...named_args) :
+        ::plssvm::csvm{ std::forward<Args>(named_args)... } {
+        // the default target is the automatic one
+        this->init(plssvm::target_platform::automatic);
+    }
+    /**
+     * @brief Construct a new C-SVM using the OpenMP backend on the @p target platform and the optionally provided @p named_args.
+     * @param[in] target the target platform used for this C-SVM
+     * @param[in] named_args the additional optional named-parameters
+     * @throws plssvm::exception all exceptions thrown in the base class constructor
+     * @throws plssvm::openmp::backend_exception if the target platform isn't plssvm::target_platform::automatic or plssvm::target_platform::cpu
+     * @throws plssvm::openmp::backend_exception if the plssvm::target_platform::cpu target isn't available
+     */
+    template <typename... Args, PLSSVM_REQUIRES(detail::has_only_parameter_named_args_v<Args...>)>
+    explicit csvm(const target_platform target, Args &&...named_args) :
+        ::plssvm::csvm{ std::forward<Args>(named_args)... } {
+        this->init(target);
+    }
+
+    /**
+     * @copydoc plssvm::csvm::csvm(const plssvm::csvm &)
+     */
+    csvm(const csvm &) = delete;
+    /**
+     * @copydoc plssvm::csvm::csvm(plssvm::csvm &&) noexcept
+     */
+    csvm(csvm &&) noexcept = default;
+    /**
+     * @copydoc plssvm::csvm::operator=(const plssvm::csvm &)
+     */
+    csvm &operator=(const csvm &) = delete;
+    /**
+     * @copydoc plssvm::csvm::operator=(plssvm::csvm &&) noexcept
+     */
+    csvm &operator=(csvm &&) noexcept = default;
+    /**
+     * @brief Default destructor since the copy and move constructors and copy- and move-assignment operators are defined.
+     */
+    ~csvm() override = default;
 
   protected:
     /**
-     * @copydoc plssvm::csvm::setup_data_on_device
+     * @copydoc plssvm::csvm::get_device_memory
      */
-    void setup_data_on_device() override {
-        // OpenMP device is the CPU -> no special load functions
-    }
+    [[nodiscard]] ::plssvm::detail::memory_size get_device_memory() const final;
     /**
-     * @copydoc plssvm::csvm::generate_q
+     * @copydoc plssvm::csvm::get_max_mem_alloc_size
      */
-    [[nodiscard]] std::vector<real_type> generate_q() override;
-    /**
-     * @copydoc plssvm::csvm::solver_CG
-     */
-    std::vector<real_type> solver_CG(const std::vector<real_type> &b, std::size_t imax, real_type eps, const std::vector<real_type> &q) override;
-    /**
-     * @copydoc plssvm::csvm::update_w
-     */
-    void update_w() override;
+    [[nodiscard]] ::plssvm::detail::memory_size get_max_mem_alloc_size() const final;
 
+    //***************************************************//
+    //                        fit                        //
+    //***************************************************//
     /**
-     * @brief Select the correct kernel based on the value of @p kernel_ and run it on the CPU using OpenMP.
-     * @param[in] q the `q` vector
-     * @param[out] ret the result vector
-     * @param[in] d the right-hand side of the equation
-     * @param[in] data the data
-     * @param[in] add denotes whether the values are added or subtracted from the result vector
+     * @copydoc plssvm::csvm::setup_data_on_devices
      */
-    void run_device_kernel(const std::vector<real_type> &q, std::vector<real_type> &ret, const std::vector<real_type> &d, const std::vector<std::vector<real_type>> &data, real_type add);
+    [[nodiscard]] detail::simple_any setup_data_on_devices(solver_type solver, const soa_matrix<real_type> &A) const final;
+    /**
+     * @copydoc plssvm::csvm::assemble_kernel_matrix
+     */
+    [[nodiscard]] detail::simple_any assemble_kernel_matrix(solver_type solver, const parameter &params, const detail::simple_any &data, const std::vector<real_type> &q_red, real_type QA_cost) const final;
+    /**
+     * @copydoc plssvm::csvm::blas_level_3
+     */
+    void blas_level_3(solver_type solver, real_type alpha, const detail::simple_any &A, const soa_matrix<real_type> &B, real_type beta, soa_matrix<real_type> &C) const final;
+
+    //***************************************************//
+    //                   predict, score                  //
+    //***************************************************//
+    /**
+     * @copydoc plssvm::csvm::predict_values
+     */
+    [[nodiscard]] aos_matrix<real_type> predict_values(const parameter &params, const soa_matrix<real_type> &support_vectors, const aos_matrix<real_type> &alpha, const std::vector<real_type> &rho, soa_matrix<real_type> &w, const soa_matrix<real_type> &predict_points) const final;
+
+  private:
+    /**
+     * @brief Initializes the OpenMP backend and performs some sanity checks.
+     * @param[in] target the target platform to use
+     * @throws plssvm::openmp::backend_exception if the target platform isn't plssvm::target_platform::automatic or plssvm::target_platform::cpu
+     * @throws plssvm::openmp::backend_exception if the plssvm::target_platform::cpu target isn't available
+     */
+    void init(target_platform target);
 };
 
-extern template class csvm<float>;
-extern template class csvm<double>;
-
 }  // namespace openmp
+
+namespace detail {
+
+/**
+ * @brief Sets the `value` to `true` since C-SVMs using the OpenMP backend are available.
+ */
+template <>
+struct csvm_backend_exists<openmp::csvm> : std::true_type {};
+
+}  // namespace detail
+
 }  // namespace plssvm
+
+#endif  // PLSSVM_BACKENDS_OPENMP_CSVM_HPP_

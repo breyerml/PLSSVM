@@ -9,43 +9,47 @@
  * @brief MOCK class for the C-SVM class using the HIP backend.
  */
 
+#ifndef PLSSVM_TESTS_BACKENDS_CUDA_MOCK_HIP_CSVM_HPP_
+#define PLSSVM_TESTS_BACKENDS_CUDA_MOCK_HIP_CSVM_HPP_
 #pragma once
 
-#include "plssvm/backends/HIP/csvm.hpp"                   // plssvm::hip::csvm
-#include "plssvm/backends/HIP/detail/device_ptr.hip.hpp"  // plssvm::hip::detail::device_ptr
-#include "plssvm/parameter.hpp"                           // plssvm::parameter
-
-#include <vector>  // std::vector
+#include "plssvm/backends/HIP/csvm.hpp"  // plssvm::hip::csvm
 
 /**
  * @brief GTest mock class for the HPI CSVM.
- * @tparam T the type of the data
  */
-template <typename T>
-class mock_hip_csvm : public plssvm::hip::csvm<T> {
-    using base_type = plssvm::hip::csvm<T>;
+class mock_hip_csvm final : public plssvm::hip::csvm {
+    using base_type = plssvm::hip::csvm;
 
   public:
-    using real_type = typename base_type::real_type;
-    using device_ptr_type = typename base_type::device_ptr_type;
-    using queue_type = typename base_type::queue_type;
+    using base_type::device_ptr_type;
 
-    explicit mock_hip_csvm(const plssvm::parameter<T> &params) :
-        base_type{ params } {}
+    template <typename... Args>
+    explicit mock_hip_csvm(Args &&...args) :
+        base_type{ std::forward<Args>(args)... } {}
 
-    // make non-virtual functions publicly visible
-    using base_type::device_reduction;
-    using base_type::generate_q;
-    using base_type::run_device_kernel;
-    using base_type::setup_data_on_device;
+    // make protected member functions public
+    using base_type::assemble_kernel_matrix;
+    using base_type::blas_level_3;
+    using base_type::get_device_memory;
+    using base_type::get_max_work_group_size;
+    using base_type::setup_data_on_devices;
 
-    // parameter setter
-    void set_cost(const real_type cost) { base_type::cost_ = cost; }
-    void set_QA_cost(const real_type QA_cost) { base_type::QA_cost_ = QA_cost; }
+    using base_type::predict_values;
 
-    // getter for internal variables
-    std::shared_ptr<const std::vector<real_type>> &get_alpha_ptr() { return base_type::alpha_ptr_; }
-    const std::vector<device_ptr_type> &get_device_data() const { return base_type::data_d_; }
-    std::vector<queue_type> &get_devices() { return base_type::devices_; }
-    typename std::vector<queue_type>::size_type get_num_devices() const { return base_type::devices_.size(); }
+    using base_type::conjugate_gradients;
+    using base_type::perform_dimensional_reduction;
+    using base_type::run_blas_level_3;
+    using base_type::solve_lssvm_system_of_linear_equations;
+
+    using base_type::get_max_mem_alloc_size;
+
+    using base_type::run_assemble_kernel_matrix_explicit;
+    using base_type::run_blas_level_3_kernel_explicit;
+    using base_type::run_predict_kernel;
+    using base_type::run_w_kernel;
+
+    using base_type::devices_;
 };
+
+#endif  // PLSSVM_TESTS_BACKENDS_CUDA_MOCK_HIP_CSVM_HPP_

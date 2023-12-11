@@ -1,3 +1,4 @@
+
 #!groovy
 
 def buildbadge = addEmbeddableBadgeConfiguration(id: "Jenkins", subject: "Jenkins Tests", status: "skipped")

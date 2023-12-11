@@ -9,61 +9,50 @@
  * @brief MOCK class for the C-SVM base class.
  */
 
+#ifndef PLSSVM_TESTS_MOCK_CSVM_HPP_
+#define PLSSVM_TESTS_MOCK_CSVM_HPP_
 #pragma once
 
-#include "plssvm/csvm.hpp"             // plssvm::csvm
-#include "plssvm/kernel_types.hpp"     // plssvm::kernel_type
-#include "plssvm/parameter.hpp"        // plssvm::parameter
-#include "plssvm/target_platforms.hpp"  // plssvm::target_platform
+#include "plssvm/constants.hpp"           // plssvm::real_type
+#include "plssvm/csvm.hpp"                // plssvm::csvm
+#include "plssvm/detail/memory_size.hpp"  // plssvm::detail::memory_size, plssvm::detail::literals
+#include "plssvm/detail/simple_any.hpp"   // plssvm::detail::simple_any
+#include "plssvm/matrix.hpp"              // plssvm::aos_matrix
+#include "plssvm/parameter.hpp"           // plssvm::parameter
+#include "plssvm/solver_types.hpp"        // plssvm::solver_type
 
-#include "gmock/gmock.h"  // MOCK_METHOD
+#include "gmock/gmock.h"  // MOCK_METHOD, ON_CALL, ::testing::Return
 
-#include <memory>  // std::shared_ptr
-#include <vector>  // std::vector
+#include <utility>  // std::forward
+#include <vector>   // std::vector
 
 /**
  * @brief GTest mock class for the base CSVM class.
- * @tparam T the type of the data
  */
-template <typename T>
-class mock_csvm : public plssvm::csvm<T> {
-    using base_type = plssvm::csvm<T>;
-
+class mock_csvm final : public plssvm::csvm {
   public:
-    using real_type = typename base_type::real_type;
-
-    explicit mock_csvm(const plssvm::parameter<T> &params) :
-        base_type{ params } {}
+    template <typename... Args>
+    explicit mock_csvm(Args &&...args) :
+        plssvm::csvm{ std::forward<Args>(args)... } {
+        this->fake_functions();
+    }
 
     // mock pure virtual functions
-    MOCK_METHOD(void, setup_data_on_device, (), (override));
-    MOCK_METHOD(std::vector<real_type>, generate_q, (), (override));
-    MOCK_METHOD(std::vector<real_type>, solver_CG, (const std::vector<real_type> &, const std::size_t, const real_type, const std::vector<real_type> &), (override));
-    MOCK_METHOD(void, update_w, (), (override));
-    MOCK_METHOD(std::vector<real_type>, predict, (const std::vector<std::vector<real_type>> &), (override));
+    MOCK_METHOD((plssvm::detail::memory_size), get_device_memory, (), (const, override));
+    MOCK_METHOD((plssvm::detail::memory_size), get_max_mem_alloc_size, (), (const, override));
+    MOCK_METHOD((plssvm::detail::simple_any), setup_data_on_devices, (plssvm::solver_type, const plssvm::soa_matrix<plssvm::real_type> &), (const, override));
+    MOCK_METHOD((plssvm::detail::simple_any), assemble_kernel_matrix, (plssvm::solver_type, const plssvm::parameter &, const plssvm::detail::simple_any &, const std::vector<plssvm::real_type> &, plssvm::real_type), (const, override));
+    MOCK_METHOD((void), blas_level_3, (plssvm::solver_type, plssvm::real_type, const plssvm::detail::simple_any &, const plssvm::soa_matrix<plssvm::real_type> &, plssvm::real_type, plssvm::soa_matrix<plssvm::real_type> &), (const, override));
+    MOCK_METHOD((plssvm::aos_matrix<plssvm::real_type>), predict_values, (const plssvm::parameter &, const plssvm::soa_matrix<plssvm::real_type> &, const plssvm::aos_matrix<plssvm::real_type> &, const std::vector<plssvm::real_type> &, plssvm::soa_matrix<plssvm::real_type> &, const plssvm::soa_matrix<plssvm::real_type> &), (const, override));
 
-    // make non-virtual functions publicly visible
-    using base_type::kernel_function;
-    using base_type::predict;  // no idea way necessary (since the used 'real_type predict(const std::vector<real_type>&)' is a public member function) but it works
-    using base_type::transform_data;
-
-    // getter for all parameter
-    plssvm::target_platform get_target() const { return base_type::target_; }
-    plssvm::kernel_type get_kernel() const { return base_type::kernel_; }
-    int get_degree() const { return base_type::degree_; }
-    real_type get_gamma() const { return base_type::gamma_; }
-    real_type get_coef0() const { return base_type::coef0_; }
-    real_type get_cost() const { return base_type::cost_; }
-    real_type get_epsilon() const { return base_type::epsilon_; }
-    bool get_print_info() const { return base_type::print_info_; }
-
-    const std::shared_ptr<const std::vector<std::vector<real_type>>> &get_data_ptr() const { return base_type::data_ptr_; }
-    const std::vector<std::vector<real_type>> &get_data() const { return *base_type::data_ptr_; }
-    std::shared_ptr<const std::vector<real_type>> &get_value_ptr() { return base_type::value_ptr_; }
-    std::shared_ptr<const std::vector<real_type>> &get_alpha_ptr() { return base_type::alpha_ptr_; }
-
-    std::size_t get_num_data_points() const { return base_type::num_data_points_; }
-    std::size_t get_num_features() const { return base_type::num_features_; }
-    real_type get_bias() const { return base_type::bias_; }
-    real_type get_QA_cost() const { return base_type::QA_cost_; }
+  private:
+    void fake_functions() const {
+        using namespace plssvm::detail::literals;
+        // clang-format off
+        ON_CALL(*this, get_device_memory()).WillByDefault(::testing::Return(1_GiB));
+        ON_CALL(*this, get_max_mem_alloc_size()).WillByDefault(::testing::Return(512_MiB));
+        // clang-format on
+    }
 };
+
+#endif  // PLSSVM_TESTS_MOCK_CSVM_HPP_
