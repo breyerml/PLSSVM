@@ -101,6 +101,14 @@ class csvm : public ::plssvm::csvm {
      */
     ~csvm() override = default;
 
+    /**
+     * @copydoc plssvm::csvm::num_available_devices
+     * @note On the CPU, only one device will ever be available.
+     */
+    [[nodiscard]] std::size_t num_available_devices() const noexcept override {
+        return 1;
+    }
+
   protected:
     /**
      * @copydoc plssvm::csvm::get_device_memory

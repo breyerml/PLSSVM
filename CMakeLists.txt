@@ -74,7 +74,6 @@ set(PLSSVM_BASE_SOURCES
         ${CMAKE_CURRENT_SOURCE_DIR}/src/plssvm/detail/io/file_reader.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/plssvm/detail/logger.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/plssvm/detail/memory_size.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/plssvm/detail/performance_tracker.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/plssvm/detail/sha256.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/plssvm/detail/string_utility.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/plssvm/detail/utility.cpp
@@ -586,12 +585,18 @@ if (DEFINED PLSSVM_INTERNAL_BLOCK_SIZE)
     endif ()
 endif ()
 
-## enable or disable the performance tracker
-option(PLSSVM_ENABLE_PERFORMANCE_TRACKING "Enable performance tracking to YAML files for the PLSSVM executables plssvm-train, plssvm-predict, and plssvm-scale." OFF)
-if (PLSSVM_ENABLE_PERFORMANCE_TRACKING)
-    message(STATUS "Enabled performance tracking to YAML files for the PLSSVM executables plssvm-train, plssvm-predict, and plssvm-scale.")
-    # add target definitions
-    target_compile_definitions(${PLSSVM_BASE_LIBRARY_NAME} PUBLIC PLSSVM_PERFORMANCE_TRACKER_ENABLED)
+## set specific OpenMP block sizes of requested
+if (DEFINED ENV{PLSSVM_OPENMP_BLOCK_SIZE})
+    set(PLSSVM_OPENMP_BLOCK_SIZE $ENV{PLSSVM_OPENMP_BLOCK_SIZE} CACHE STRING "The used block size for the OpenMP kernel." FORCE)
+endif ()
+if (DEFINED PLSSVM_OPENMP_BLOCK_SIZE)
+    if (PLSSVM_OPENMP_BLOCK_SIZE MATCHES "^[0-9]+$" AND PLSSVM_OPENMP_BLOCK_SIZE GREATER 0)
+        message(STATUS "Set PLSSVM_OPENMP_BLOCK_SIZE to ${PLSSVM_OPENMP_BLOCK_SIZE}.")
+        # add target definition
+        target_compile_definitions(${PLSSVM_BASE_LIBRARY_NAME} PUBLIC PLSSVM_OPENMP_BLOCK_SIZE=${PLSSVM_OPENMP_BLOCK_SIZE})
+    else ()
+        message(SEND_ERROR "PLSSVM_OPENMP_BLOCK_SIZE must be an integer greater than 0 but is \"${PLSSVM_OPENMP_BLOCK_SIZE}\"!")
+    endif ()
 endif ()
 
 ## use GEMM kernel (full kernel matrix) instead of SYMM (triangular matrix only)
@@ -636,6 +641,14 @@ endif ()
 option(PLSSVM_ENABLE_DOCUMENTATION "Build documentation using doxygen." OFF)
 if (PLSSVM_ENABLE_DOCUMENTATION)
     add_subdirectory(docs)
+endif ()
+
+########################################################################################################################
+##                                 enable performance tracking and hardware sampling                                  ##
+########################################################################################################################
+option(PLSSVM_ENABLE_PERFORMANCE_TRACKING "Enable performance tracking to YAML files for the PLSSVM executables plssvm-train, plssvm-predict, and plssvm-scale." OFF)
+if (PLSSVM_ENABLE_PERFORMANCE_TRACKING)
+    add_subdirectory(src/plssvm/detail/tracking)
 endif ()
 
 
