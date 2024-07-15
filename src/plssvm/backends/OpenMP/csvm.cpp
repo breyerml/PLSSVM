@@ -18,7 +18,7 @@
 #include "plssvm/detail/logger.hpp"                                       // plssvm::detail::log, plssvm::verbosity_level
 #include "plssvm/detail/memory_size.hpp"                                  // plssvm::detail::memory_size
 #include "plssvm/detail/operators.hpp"                                    // various operator overloads for std::vector and scalars
-#include "plssvm/detail/performance_tracker.hpp"                          // plssvm::detail::tracking_entry, PLSSVM_DETAIL_PERFORMANCE_TRACKER_ADD_TRACKING_ENTRY
+#include "plssvm/detail/tracking/performance_tracker.hpp"                          // plssvm::detail::tracking::tracking_entry, PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_ADD_TRACKING_ENTRY
 #include "plssvm/kernel_function_types.hpp"                               // plssvm::kernel_function_type
 #include "plssvm/matrix.hpp"                                              // plssvm::aos_matrix, plssvm::soa_matrix
 #include "plssvm/parameter.hpp"                                           // plssvm::parameter
@@ -64,9 +64,9 @@ void csvm::init(const target_platform target) {
 
     plssvm::detail::log(verbosity_level::full,
                         "\nUsing OpenMP as backend with {} threads.\n\n",
-                        plssvm::detail::tracking_entry{ "backend", "num_threads", num_omp_threads });
-    PLSSVM_DETAIL_PERFORMANCE_TRACKER_ADD_TRACKING_ENTRY((plssvm::detail::tracking_entry{ "backend", "backend", plssvm::backend_type::openmp }));
-    PLSSVM_DETAIL_PERFORMANCE_TRACKER_ADD_TRACKING_ENTRY((plssvm::detail::tracking_entry{ "backend", "target_platform", plssvm::target_platform::cpu }));
+                        plssvm::detail::tracking::tracking_entry{ "backend", "num_threads", num_omp_threads });
+    PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_ADD_TRACKING_ENTRY((plssvm::detail::tracking::tracking_entry{ "backend", "backend", plssvm::backend_type::openmp }));
+    PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_ADD_TRACKING_ENTRY((plssvm::detail::tracking::tracking_entry{ "backend", "target_platform", plssvm::target_platform::cpu }));
 
     // update the target platform
     target_ = plssvm::target_platform::cpu;

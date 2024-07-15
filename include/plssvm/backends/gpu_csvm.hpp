@@ -79,10 +79,9 @@ class gpu_csvm : public ::plssvm::csvm {
     ~gpu_csvm() override = default;
 
     /**
-     * @brief Return the number of available devices for the current backend.
-     * @return the number of available devices (`[[nodiscard]]`)
+     * @copydoc plssvm::csvm::num_available_devices
      */
-    [[nodiscard]] std::size_t num_available_devices() const noexcept {
+    [[nodiscard]] std::size_t num_available_devices() const noexcept override {
         return devices_.size();
     }
 
