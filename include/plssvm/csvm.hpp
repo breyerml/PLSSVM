@@ -21,7 +21,7 @@
 #include "plssvm/detail/logger.hpp"               // plssvm::detail::log, plssvm::verbosity_level
 #include "plssvm/detail/memory_size.hpp"          // plssvm::detail::memory_size
 #include "plssvm/detail/operators.hpp"            // plssvm::operators::sign
-#include "plssvm/detail/performance_tracker.hpp"  // plssvm::detail::performance_tracker
+#include "plssvm/detail/tracking/performance_tracker.hpp"  // plssvm::detail::performance_tracker
 #include "plssvm/detail/simple_any.hpp"           // plssvm::detail::simple_any
 #include "plssvm/detail/type_traits.hpp"          // PLSSVM_REQUIRES, plssvm::detail::remove_cvref_t
 #include "plssvm/detail/utility.hpp"              // plssvm::detail::to_underlying
@@ -101,6 +101,13 @@ class csvm {
      * @return the target platform (`[[nodiscard]]`)
      */
     [[nodiscard]] target_platform get_target_platform() const noexcept { return target_; }
+
+    /**
+     * @brief Return the number of available devices.
+     * @return the number of available devices (`[[nodiscard]]`)
+     */
+    [[nodiscard]] virtual std::size_t num_available_devices() const noexcept = 0;
+
     /**
      * @brief Return the currently used SVM parameter.
      * @return the SVM parameter (`[[nodiscard]]`)
@@ -340,6 +347,8 @@ model<label_type> csvm::fit(const data_set<label_type> &data, Args &&...named_ar
         throw invalid_parameter_exception{ "No labels given for training! Maybe the data is only usable for prediction?" };
     }
 
+    PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_ADD_EVENT("fit start");
+
     igor::parser parser{ named_args... };
 
     // set default values
@@ -478,7 +487,9 @@ model<label_type> csvm::fit(const data_set<label_type> &data, Args &&...named_ar
     detail::log(verbosity_level::full | verbosity_level::timing,
                 "\nLearned the SVM classifier for {} multi-class classification in {}.\n\n",
                 classification_type_to_full_string(used_classification),
-                detail::tracking_entry{ "cg", "total_runtime", std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time) });
+                detail::tracking::tracking_entry{ "cg", "total_runtime", std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time) });
+
+    PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_ADD_EVENT("fit end");
 
     return csvm_model;
 }
@@ -488,6 +499,8 @@ std::vector<label_type> csvm::predict(const model<label_type> &model, const data
     if (model.num_features() != data.num_features()) {
         throw invalid_parameter_exception{ fmt::format("Number of features per data point ({}) must match the number of features per support vector of the provided model ({})!", data.num_features(), model.num_features()) };
     }
+
+    PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_ADD_EVENT("predict start");
 
     // convert predicted values to the correct labels
     std::vector<label_type> predicted_labels(data.num_data_points());
@@ -637,6 +650,8 @@ std::vector<label_type> csvm::predict(const model<label_type> &model, const data
         }
     }
 
+    PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_ADD_EVENT("predict end");
+
     return predicted_labels;
 }
 
@@ -753,13 +768,13 @@ std::tuple<aos_matrix<real_type>, std::vector<real_type>, unsigned long long> cs
                     "  - total device memory: {}\n"
                     "  - usable device memory: {} = {}\n"
                     "  - memory needed: {}\n",
-                    detail::tracking_entry{ "solver", "system_memory", total_system_memory },
+                    detail::tracking::tracking_entry{ "solver", "system_memory", total_system_memory },
                     fmt::format("{} {}", total_system_memory, total_system_memory * percentual_safety_margin > minimal_safety_margin ? "* 0.95" : "- 512 MiB"),
-                    detail::tracking_entry{ "solver", "available_system_memory", reduce_total_memory(total_system_memory) },
-                    detail::tracking_entry{ "solver", "device_memory", total_device_memory },
+                    detail::tracking::tracking_entry{ "solver", "available_system_memory", reduce_total_memory(total_system_memory) },
+                    detail::tracking::tracking_entry{ "solver", "device_memory", total_device_memory },
                     fmt::format("{} {}", total_device_memory, total_device_memory * percentual_safety_margin > minimal_safety_margin ? "* 0.95" : "- 512 MiB"),
-                    detail::tracking_entry{ "solver", "available_device_memory", reduce_total_memory(total_device_memory) },
-                    detail::tracking_entry{ "solver", "needed_memory", total_memory_needed });
+                    detail::tracking::tracking_entry{ "solver", "available_device_memory", reduce_total_memory(total_device_memory) },
+                    detail::tracking::tracking_entry{ "solver", "needed_memory", total_memory_needed });
 
         // select solver type based on the available memory
         if (total_memory_needed < total_device_memory) {
@@ -777,7 +792,7 @@ std::tuple<aos_matrix<real_type>, std::vector<real_type>, unsigned long long> cs
         const detail::memory_size max_single_allocation_size{ sizeof(real_type) * std::max<unsigned long long>(num_rows * num_features, kernel_matrix_size) };
         detail::log(verbosity_level::full,
                     "  - max. memory allocation size: {}\n",
-                    detail::tracking_entry{ "solver", "device_max_mem_alloc_size", max_mem_alloc_size });
+                    detail::tracking::tracking_entry{ "solver", "device_max_mem_alloc_size", max_mem_alloc_size });
 
         // note: only cg_explicit currently implemented
         // TODO: also implement logic for cg_streaming and cg_implicit
@@ -797,7 +812,7 @@ std::tuple<aos_matrix<real_type>, std::vector<real_type>, unsigned long long> cs
 
     detail::log(verbosity_level::full,
                 "Using {} as solver for AX=B.\n\n",
-                detail::tracking_entry{ "solver", "solver_type", used_solver });
+                detail::tracking::tracking_entry{ "solver", "solver_type", used_solver });
 
     // perform dimensional reduction
     // note: structured binding is rejected by clang HIP compiler!
@@ -825,7 +840,7 @@ std::tuple<aos_matrix<real_type>, std::vector<real_type>, unsigned long long> cs
     const std::chrono::steady_clock::time_point assembly_end_time = std::chrono::steady_clock::now();
     detail::log(verbosity_level::full | verbosity_level::timing,
                 "Assembled the kernel matrix in {}.\n",
-                detail::tracking_entry{ "kernel_matrix", "kernel_matrix_assembly", std::chrono::duration_cast<std::chrono::milliseconds>(assembly_end_time - assembly_start_time) });
+                detail::tracking::tracking_entry{ "kernel_matrix", "kernel_matrix_assembly", std::chrono::duration_cast<std::chrono::milliseconds>(assembly_end_time - assembly_start_time) });
 
     // choose the correct algorithm based on the (provided) solver type -> currently only CG available
     aos_matrix<real_type> X;

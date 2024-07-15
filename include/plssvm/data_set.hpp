@@ -19,7 +19,7 @@
 #include "plssvm/detail/io/libsvm_parsing.hpp"           // plssvm::detail::io::{read_arff_data, write_arff_data}
 #include "plssvm/detail/io/scaling_factors_parsing.hpp"  // plssvm::detail::io::{parse_scaling_factors, read_scaling_factors}
 #include "plssvm/detail/logger.hpp"                      // plssvm::detail::log, plssvm::verbosity_level
-#include "plssvm/detail/performance_tracker.hpp"         // plssvm::detail::tracking_entry
+#include "plssvm/detail/tracking/performance_tracker.hpp"         // plssvm::detail::tracking::tracking_entry
 #include "plssvm/detail/string_utility.hpp"              // plssvm::detail::ends_with
 #include "plssvm/detail/type_list.hpp"                   // plssvm::detail::{supported_label_types, tuple_contains_v}
 #include "plssvm/detail/utility.hpp"                     // plssvm::detail::contains
@@ -426,9 +426,9 @@ void data_set<U>::scaling::save(const std::string &filename) const {
     const std::chrono::time_point end_time = std::chrono::steady_clock::now();
     detail::log(verbosity_level::full | verbosity_level::timing,
                 "Write {} scaling factors in {} to the file '{}'.\n",
-                detail::tracking_entry{ "scaling_factors_write", "num_scaling_factors", scaling_factors.size() },
-                detail::tracking_entry{ "scaling_factors_write", "time", std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time) },
-                detail::tracking_entry{ "scaling_factors_write", "filename", filename });
+                detail::tracking::tracking_entry{ "scaling_factors_write", "num_scaling_factors", scaling_factors.size() },
+                detail::tracking::tracking_entry{ "scaling_factors_write", "time", std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time) },
+                detail::tracking::tracking_entry{ "scaling_factors_write", "filename", filename });
 }
 
 //*************************************************************************************************************************************//
@@ -606,8 +606,8 @@ data_set<U>::data_set(matrix<real_type, layout> data_points) :
 
     detail::log(verbosity_level::full | verbosity_level::timing,
                 "Created a data set with {} data points and {} features.\n",
-                detail::tracking_entry{ "data_set_create", "num_data_points", num_data_points_ },
-                detail::tracking_entry{ "data_set_create", "num_features", num_features_ });
+                detail::tracking::tracking_entry{ "data_set_create", "num_data_points", num_data_points_ },
+                detail::tracking::tracking_entry{ "data_set_create", "num_features", num_features_ });
 }
 
 template <typename U>
@@ -625,9 +625,9 @@ data_set<U>::data_set(matrix<real_type, layout> data_points, std::vector<label_t
 
     detail::log(verbosity_level::full | verbosity_level::timing,
                 "Created a data set with {} data points, {} features, and {} classes.\n",
-                detail::tracking_entry{ "data_set_create", "num_data_points", num_data_points_ },
-                detail::tracking_entry{ "data_set_create", "num_features", num_features_ },
-                detail::tracking_entry{ "data_set_create", "num_classes", this->num_classes() });
+                detail::tracking::tracking_entry{ "data_set_create", "num_data_points", num_data_points_ },
+                detail::tracking::tracking_entry{ "data_set_create", "num_features", num_features_ },
+                detail::tracking::tracking_entry{ "data_set_create", "num_classes", this->num_classes() });
 }
 
 template <typename U>
@@ -680,12 +680,12 @@ void data_set<U>::save(const std::string &filename, const file_format_type forma
     const std::chrono::time_point end_time = std::chrono::steady_clock::now();
     detail::log(verbosity_level::full | verbosity_level::timing,
                 "Write {} data points with {} features and {} classes in {} to the {} file '{}'.\n",
-                detail::tracking_entry{ "data_set_write", "num_data_points", num_data_points_ },
-                detail::tracking_entry{ "data_set_write", "num_features", num_features_ },
-                detail::tracking_entry{ "data_set_write", "num_classes", this->num_classes() },
-                detail::tracking_entry{ "data_set_write", "time", std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time) },
-                detail::tracking_entry{ "data_set_write", "format", format },
-                detail::tracking_entry{ "data_set_write", "filename", filename });
+                detail::tracking::tracking_entry{ "data_set_write", "num_data_points", num_data_points_ },
+                detail::tracking::tracking_entry{ "data_set_write", "num_features", num_features_ },
+                detail::tracking::tracking_entry{ "data_set_write", "num_classes", this->num_classes() },
+                detail::tracking::tracking_entry{ "data_set_write", "time", std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time) },
+                detail::tracking::tracking_entry{ "data_set_write", "format", format },
+                detail::tracking::tracking_entry{ "data_set_write", "filename", filename });
 }
 
 template <typename U>
@@ -813,9 +813,9 @@ void data_set<U>::scale() {
     const std::chrono::time_point end_time = std::chrono::steady_clock::now();
     detail::log(verbosity_level::full | verbosity_level::timing,
                 "Scaled the data set to the range [{}, {}] in {}.\n",
-                detail::tracking_entry{ "data_set_scale", "lower", lower },
-                detail::tracking_entry{ "data_set_scale", "upper", upper },
-                detail::tracking_entry{ "data_set_scale", "time", std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time) });
+                detail::tracking::tracking_entry{ "data_set_scale", "lower", lower },
+                detail::tracking::tracking_entry{ "data_set_scale", "upper", upper },
+                detail::tracking::tracking_entry{ "data_set_scale", "time", std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time) });
 }
 
 template <typename U>
@@ -868,12 +868,12 @@ void data_set<U>::read_file(const std::string &filename, file_format_type format
     const std::chrono::time_point end_time = std::chrono::steady_clock::now();
     detail::log(verbosity_level::full | verbosity_level::timing,
                 "Read {} data points with {} features and {} classes in {} using the {} parser from file '{}'.\n",
-                detail::tracking_entry{ "data_set_read", "num_data_points", num_data_points_ },
-                detail::tracking_entry{ "data_set_read", "num_features", num_features_ },
-                detail::tracking_entry{ "data_set_read", "num_classes", this->num_classes() },
-                detail::tracking_entry{ "data_set_read", "time", std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time) },
-                detail::tracking_entry{ "data_set_read", "format", format },
-                detail::tracking_entry{ "data_set_read", "filename", filename });
+                detail::tracking::tracking_entry{ "data_set_read", "num_data_points", num_data_points_ },
+                detail::tracking::tracking_entry{ "data_set_read", "num_features", num_features_ },
+                detail::tracking::tracking_entry{ "data_set_read", "num_classes", this->num_classes() },
+                detail::tracking::tracking_entry{ "data_set_read", "time", std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time) },
+                detail::tracking::tracking_entry{ "data_set_read", "format", format },
+                detail::tracking::tracking_entry{ "data_set_read", "filename", filename });
 }
 
 }  // namespace plssvm
