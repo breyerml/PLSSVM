@@ -12,7 +12,7 @@
 #include "plssvm/detail/assert.hpp"               // PLSSVM_ASSERT
 #include "plssvm/detail/logger.hpp"               // plssvm::detail::log, plssvm::verbosity_level
 #include "plssvm/detail/operators.hpp"            // plssvm operator overloads for vectors
-#include "plssvm/detail/performance_tracker.hpp"  // PLSSVM_DETAIL_PERFORMANCE_TRACKER_ADD_TRACKING_ENTRY, plssvm::detail::tracking_entry
+#include "plssvm/detail/tracking/performance_tracker.hpp"  // PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_ADD_TRACKING_ENTRY, plssvm::detail::tracking::tracking_entry
 #include "plssvm/detail/simple_any.hpp"           // plssvm::detail::simple_any
 #include "plssvm/exceptions/exceptions.hpp"       // plssvm::invalid_parameter_exception
 #include "plssvm/kernel_function_types.hpp"       // plssvm::kernel_function_type, plssvm::kernel_function
@@ -54,6 +54,8 @@ std::pair<soa_matrix<real_type>, unsigned long long> csvm::conjugate_gradients(c
     PLSSVM_ASSERT(!B.empty(), "The right-hand sides may not be empty!");
     PLSSVM_ASSERT(eps > real_type{ 0.0 }, "The epsilon value must be greater than 0.0!");
     PLSSVM_ASSERT(max_cg_iter > 0, "The maximum number of iterations must be greater than 0!");
+
+    PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_ADD_EVENT("cg start");
 
     const std::size_t num_rows = B.num_cols();
     const std::size_t num_rhs = B.num_rows();
@@ -97,6 +99,8 @@ std::pair<soa_matrix<real_type>, unsigned long long> csvm::conjugate_gradients(c
 
     unsigned long long iter = 0;
     while (iter < max_cg_iter && num_rhs_converged() < num_rhs) {
+        PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_ADD_EVENT(fmt::format("cg iter {} start", iter));
+
         const std::size_t max_residual_difference_idx = rhs_idx_max_residual_difference();
         detail::log(verbosity_level::full | verbosity_level::timing,
                     "Start Iteration {} (max: {}) with {}/{} converged rhs (max residual {} with target residual {} for rhs {}). ",
@@ -156,22 +160,24 @@ std::pair<soa_matrix<real_type>, unsigned long long> csvm::conjugate_gradients(c
 #endif
     detail::log(verbosity_level::full | verbosity_level::timing,
                 "Finished after {}/{} iterations with {}/{} converged rhs (max residual {} with target residual {} for rhs {}) and an average iteration time of {} and an average {} time of {}.\n",
-                detail::tracking_entry{ "cg", "iterations", iter },
-                detail::tracking_entry{ "cg", "max_iterations", max_cg_iter },
-                detail::tracking_entry{ "cg", "num_converged_rhs", num_rhs_converged() },
-                detail::tracking_entry{ "cg", "num_rhs", num_rhs },
+                detail::tracking::tracking_entry{ "cg", "iterations", iter },
+                detail::tracking::tracking_entry{ "cg", "max_iterations", max_cg_iter },
+                detail::tracking::tracking_entry{ "cg", "num_converged_rhs", num_rhs_converged() },
+                detail::tracking::tracking_entry{ "cg", "num_rhs", num_rhs },
                 delta[max_residual_difference_idx],
                 eps * eps * delta0[max_residual_difference_idx],
                 max_residual_difference_idx,
-                detail::tracking_entry{ "cg", "avg_iteration_time", total_iteration_time / iter },
+                detail::tracking::tracking_entry{ "cg", "avg_iteration_time", total_iteration_time / iter },
                 blas_level_3_type,
-                detail::tracking_entry{ "cg", "avg_blas_level_3_time", total_blas_level_3_time / (1 + iter + iter / 50) });
-    PLSSVM_DETAIL_PERFORMANCE_TRACKER_ADD_TRACKING_ENTRY((detail::tracking_entry{ "cg", "residuals", delta }));
-    PLSSVM_DETAIL_PERFORMANCE_TRACKER_ADD_TRACKING_ENTRY((detail::tracking_entry{ "cg", "target_residuals", eps * eps * delta0 }));
-    PLSSVM_DETAIL_PERFORMANCE_TRACKER_ADD_TRACKING_ENTRY((detail::tracking_entry{ "cg", "epsilon", eps }));
+                detail::tracking::tracking_entry{ "cg", "avg_blas_level_3_time", total_blas_level_3_time / (1 + iter + iter / 50) });
+    PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_ADD_TRACKING_ENTRY((detail::tracking::tracking_entry{ "cg", "residuals", delta }));
+    PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_ADD_TRACKING_ENTRY((detail::tracking::tracking_entry{ "cg", "target_residuals", eps * eps * delta0 }));
+    PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_ADD_TRACKING_ENTRY((detail::tracking::tracking_entry{ "cg", "epsilon", eps }));
     detail::log(verbosity_level::libsvm,
                 "optimization finished, #iter = {}\n",
                 iter);
+
+    PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_ADD_EVENT("cg end");
 
     return std::make_pair(X, iter);
 }
@@ -209,7 +215,7 @@ std::pair<std::vector<real_type>, real_type> csvm::perform_dimensional_reduction
     const std::chrono::steady_clock::time_point dimension_reduction_end_time = std::chrono::steady_clock::now();
     detail::log(verbosity_level::full | verbosity_level::timing,
                 "Performed dimensional reduction in {}.\n",
-                detail::tracking_entry{ "cg", "dimensional_reduction", std::chrono::duration_cast<std::chrono::milliseconds>(dimension_reduction_end_time - dimension_reduction_start_time) });
+                detail::tracking::tracking_entry{ "cg", "dimensional_reduction", std::chrono::duration_cast<std::chrono::milliseconds>(dimension_reduction_end_time - dimension_reduction_start_time) });
 
     return std::make_pair(std::move(q_red), QA_cost);
 }
