@@ -67,4 +67,7 @@ matrix_exception::matrix_exception(const std::string &msg, source_location loc) 
 kernel_launch_resources::kernel_launch_resources(const std::string &msg, source_location loc) :
     exception{ msg, "kernel_launch_resources", loc } {}
 
+hardware_sampling_exception::hardware_sampling_exception(const std::string &msg, source_location loc) :
+    exception{ msg, "hardware_sampling_exception", loc } { }
+
 }  // namespace plssvm

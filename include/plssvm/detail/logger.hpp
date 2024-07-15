@@ -14,7 +14,7 @@
 #define PLSSVM_DETAIL_LOGGER_HPP_
 #pragma once
 
-#include "plssvm/detail/performance_tracker.hpp"  // plssvm::detail::is_tracking_entry_v, PLSSVM_DETAIL_PERFORMANCE_TRACKER_ADD_TRACKING_ENTRY
+#include "plssvm/detail/tracking/performance_tracker.hpp"  // plssvm::detail::tracking::is_tracking_entry_v, PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_ADD_TRACKING_ENTRY
 #include "plssvm/detail/utility.hpp"              // PLSSVM_EXTERN
 
 #include "fmt/chrono.h"   // format std::chrono types
@@ -98,7 +98,7 @@ namespace detail {
 
 /**
  * @breif Output the message @p msg filling the {fmt} like placeholders with @p args to the standard output stream.
- * @details If a value in @p Args is of type plssvm::detail::tracking_entry and performance tracking is enabled,
+ * @details If a value in @p Args is of type plssvm::detail::tracking::tracking_entry and performance tracking is enabled,
  *          this is also added to the plssvm::detail::performance_tracker.
  *          Only logs the message if the verbosity level matches the `plssvm::verbosity` level.
  * @tparam Args the types of the placeholder values
@@ -116,8 +116,8 @@ void log(const verbosity_level verb, const std::string_view msg, Args &&...args)
 
     // if performance tracking has been enabled, add tracking entries
     ([](auto &&arg) {
-        if constexpr (detail::is_tracking_entry_v<decltype(arg)>) {
-            PLSSVM_DETAIL_PERFORMANCE_TRACKER_ADD_TRACKING_ENTRY(std::forward<decltype(arg)>(arg));
+        if constexpr (detail::tracking::is_tracking_entry_v<decltype(arg)>) {
+            PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_ADD_TRACKING_ENTRY(std::forward<decltype(arg)>(arg));
         }
     }(std::forward<Args>(args)),
      ...);
