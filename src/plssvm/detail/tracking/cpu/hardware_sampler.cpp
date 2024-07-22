@@ -221,7 +221,7 @@ void cpu_hardware_sampler::sampling_loop() {
 
         // retrieve the turbostat data
         const std::vector<std::string_view> data = detail::split(detail::trim(turbostat_output), '\n');
-        PLSSVM_ASSERT(data.size() == 2, "Must read exactly two lines, but read {} lines!", data.size());
+        PLSSVM_ASSERT(data.size() >= 2, "Must read at least two lines, but read {} lines!", data.size());
         const std::vector<std::string_view> header = detail::split(data[0], '\t');
         const std::vector<std::string_view> values = detail::split(data[1], '\t');
 
@@ -365,7 +365,7 @@ void cpu_hardware_sampler::sampling_loop() {
 
                 // retrieve the turbostat data
                 const std::vector<std::string_view> data = detail::split(detail::trim(turbostat_output), '\n');
-                PLSSVM_ASSERT(data.size() == 2, "Must read exactly two lines, but read {} lines!", data.size());
+                PLSSVM_ASSERT(data.size() >= 2, "Must read at least two lines, but read {} lines!", data.size());
                 const std::vector<std::string_view> header = detail::split(data[0], '\t');
                 const std::vector<std::string_view> values = detail::split(data[1], '\t');
 
