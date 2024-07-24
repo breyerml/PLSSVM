@@ -8,17 +8,17 @@
 
 #include "plssvm/csvm.hpp"
 
-#include "plssvm/constants.hpp"                   // plssvm::real_type
-#include "plssvm/detail/assert.hpp"               // PLSSVM_ASSERT
-#include "plssvm/detail/logger.hpp"               // plssvm::detail::log, plssvm::verbosity_level
-#include "plssvm/detail/operators.hpp"            // plssvm operator overloads for vectors
+#include "plssvm/constants.hpp"                            // plssvm::real_type
+#include "plssvm/detail/assert.hpp"                        // PLSSVM_ASSERT
+#include "plssvm/detail/logger.hpp"                        // plssvm::detail::log, plssvm::verbosity_level
+#include "plssvm/detail/operators.hpp"                     // plssvm operator overloads for vectors
+#include "plssvm/detail/simple_any.hpp"                    // plssvm::detail::simple_any
 #include "plssvm/detail/tracking/performance_tracker.hpp"  // PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_ADD_TRACKING_ENTRY, plssvm::detail::tracking::tracking_entry
-#include "plssvm/detail/simple_any.hpp"           // plssvm::detail::simple_any
-#include "plssvm/exceptions/exceptions.hpp"       // plssvm::invalid_parameter_exception
-#include "plssvm/kernel_function_types.hpp"       // plssvm::kernel_function_type, plssvm::kernel_function
-#include "plssvm/matrix.hpp"                      // plssvm::aos_matrix
-#include "plssvm/parameter.hpp"                   // plssvm::parameter
-#include "plssvm/solver_types.hpp"                // plssvm::solver_type
+#include "plssvm/exceptions/exceptions.hpp"                // plssvm::invalid_parameter_exception
+#include "plssvm/kernel_function_types.hpp"                // plssvm::kernel_function_type, plssvm::kernel_function
+#include "plssvm/matrix.hpp"                               // plssvm::aos_matrix
+#include "plssvm/parameter.hpp"                            // plssvm::parameter
+#include "plssvm/solver_types.hpp"                         // plssvm::solver_type
 
 #include "fmt/core.h"  // fmt::format
 
@@ -26,7 +26,7 @@
 #include <chrono>      // std::chrono::{steady_clock, duration_cast, milliseconds}
 #include <cstddef>     // std::size_t
 #include <functional>  // std::plus
-#include <numeric>     // std::inner_product
+#include <numeric>     // std::inner_product, std::accumulate
 #include <utility>     // std::move
 #include <utility>     // std::pair, std::make_pair
 #include <vector>      // std::vector
@@ -62,7 +62,7 @@ std::pair<aos_matrix<real_type>, unsigned long long> csvm::conjugate_gradients(c
 
     // timing for each CG iteration
     std::chrono::milliseconds total_iteration_time{};
-    std::chrono::milliseconds total_blas_level_3_time{};
+    std::vector<std::chrono::milliseconds> blas_level_3_times{};
 
     //
     // perform Conjugate Gradients (CG) algorithm
@@ -72,7 +72,7 @@ std::pair<aos_matrix<real_type>, unsigned long long> csvm::conjugate_gradients(c
 
     // R = B - A * X
     aos_matrix<real_type> R{ B };
-    total_blas_level_3_time += this->run_blas_level_3(cg_solver, real_type{ -1.0 }, A, X, real_type{ 1.0 }, R);
+    blas_level_3_times.push_back(this->run_blas_level_3(cg_solver, real_type{ -1.0 }, A, X, real_type{ 1.0 }, R));
 
     // delta = R.T * R
     std::vector<real_type> delta = rowwise_dot(R, R);
@@ -115,7 +115,7 @@ std::pair<aos_matrix<real_type>, unsigned long long> csvm::conjugate_gradients(c
 
         // Q = A * D
         aos_matrix<real_type> Q{ D.num_rows(), D.num_cols() };
-        total_blas_level_3_time += this->run_blas_level_3(cg_solver, real_type{ 1.0 }, A, D, real_type{ 0.0 }, Q);
+        blas_level_3_times.push_back(this->run_blas_level_3(cg_solver, real_type{ 1.0 }, A, D, real_type{ 0.0 }, Q));
 
         // alpha = delta_new / (D^T * Q))
         const std::vector<real_type> alpha = delta / rowwise_dot(D, Q);
@@ -127,7 +127,7 @@ std::pair<aos_matrix<real_type>, unsigned long long> csvm::conjugate_gradients(c
             // explicitly recalculate residual to remove accumulating floating point errors
             // R = B - A * X
             R = B;
-            total_blas_level_3_time += this->run_blas_level_3(cg_solver, real_type{ -1.0 }, A, X, real_type{ 1.0 }, R);
+            blas_level_3_times.push_back(this->run_blas_level_3(cg_solver, real_type{ -1.0 }, A, X, real_type{ 1.0 }, R));
         } else {
             // R = R - alpha * Q
             R -= rowwise_scale(alpha, Q);
@@ -153,13 +153,8 @@ std::pair<aos_matrix<real_type>, unsigned long long> csvm::conjugate_gradients(c
         ++iter;
     }
     const std::size_t max_residual_difference_idx = rhs_idx_max_residual_difference();
-#if defined(PLSSVM_USE_GEMM)
-    const std::string_view blas_level_3_type{ "GEMM" };
-#else
-    const std::string_view blas_level_3_type{ "SYMM" };
-#endif
     detail::log(verbosity_level::full | verbosity_level::timing,
-                "Finished after {}/{} iterations with {}/{} converged rhs (max residual {} with target residual {} for rhs {}) and an average iteration time of {} and an average {} time of {}.\n",
+                "Finished after {}/{} iterations with {}/{} converged rhs (max residual {} with target residual {} for rhs {}) and an average iteration time of {}.\n",
                 detail::tracking::tracking_entry{ "cg", "iterations", iter },
                 detail::tracking::tracking_entry{ "cg", "max_iterations", max_cg_iter },
                 detail::tracking::tracking_entry{ "cg", "num_converged_rhs", num_rhs_converged() },
@@ -167,9 +162,8 @@ std::pair<aos_matrix<real_type>, unsigned long long> csvm::conjugate_gradients(c
                 delta[max_residual_difference_idx],
                 eps * eps * delta0[max_residual_difference_idx],
                 max_residual_difference_idx,
-                detail::tracking::tracking_entry{ "cg", "avg_iteration_time", total_iteration_time / iter },
-                blas_level_3_type,
-                detail::tracking::tracking_entry{ "cg", "avg_blas_level_3_time", total_blas_level_3_time / (1 + iter + iter / 50) });
+                detail::tracking::tracking_entry{ "cg", "avg_iteration_time", total_iteration_time / iter });
+    PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_ADD_TRACKING_ENTRY((detail::tracking::tracking_entry{ "cg", "blas_level_3_times", blas_level_3_times }));
     PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_ADD_TRACKING_ENTRY((detail::tracking::tracking_entry{ "cg", "residuals", delta }));
     PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_ADD_TRACKING_ENTRY((detail::tracking::tracking_entry{ "cg", "target_residuals", eps * eps * delta0 }));
     PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_ADD_TRACKING_ENTRY((detail::tracking::tracking_entry{ "cg", "epsilon", eps }));
@@ -193,19 +187,19 @@ std::pair<std::vector<real_type>, real_type> csvm::perform_dimensional_reduction
     std::vector<real_type> q_red(num_rows_reduced);
     switch (params.kernel_type) {
         case kernel_function_type::linear:
-            #pragma omp parallel for default(none) shared(q_red, A) firstprivate(num_rows_reduced)
+#pragma omp parallel for default(none) shared(q_red, A) firstprivate(num_rows_reduced)
             for (std::size_t i = 0; i < num_rows_reduced; ++i) {
                 q_red[i] = kernel_function<kernel_function_type::linear>(A, i, A, num_rows_reduced);
             }
             break;
         case kernel_function_type::polynomial:
-            #pragma omp parallel for default(none) shared(q_red, A, params) firstprivate(num_rows_reduced)
+#pragma omp parallel for default(none) shared(q_red, A, params) firstprivate(num_rows_reduced)
             for (std::size_t i = 0; i < num_rows_reduced; ++i) {
                 q_red[i] = kernel_function<kernel_function_type::polynomial>(A, i, A, num_rows_reduced, params.degree.value(), params.gamma.value(), params.coef0.value());
             }
             break;
         case kernel_function_type::rbf:
-            #pragma omp parallel for default(none) shared(q_red, A, params) firstprivate(num_rows_reduced)
+#pragma omp parallel for default(none) shared(q_red, A, params) firstprivate(num_rows_reduced)
             for (std::size_t i = 0; i < num_rows_reduced; ++i) {
                 q_red[i] = kernel_function<kernel_function_type::rbf>(A, i, A, num_rows_reduced, params.gamma.value());
             }
