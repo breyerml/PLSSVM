@@ -206,12 +206,12 @@ void performance_tracker::save(std::ostream &out) {
     constexpr bool assert_enabled = PLSSVM_IS_DEFINED(PLSSVM_ENABLE_ASSERTS);
     // check whether LTO has been enabled
     constexpr bool lto_enabled = PLSSVM_IS_DEFINED(PLSSVM_LTO_SUPPORTED);
-    // check whether fast-math has been enabled
-    constexpr bool fast_math_enabled = PLSSVM_IS_DEFINED(PLSSVM_USE_FAST_MATH);
+    // check whether GEMM has been used instead of SYMM
+    constexpr bool use_gemm = PLSSVM_IS_DEFINED(PLSSVM_USE_GEMM);
     // check whether the maximum allocatable memory size should be enforced
     constexpr bool enforce_max_mem_alloc_size = PLSSVM_IS_DEFINED(PLSSVM_ENFORCE_MAX_MEM_ALLOC_SIZE);
 
-    // begin a new YAML document (only with "---" multiple YAML docments in a single file are allowed)
+    // begin a new YAML document (only with "---" multiple YAML documents in a single file are allowed)
     out << "---\n";
 
     // output metadata information
@@ -225,7 +225,7 @@ void performance_tracker::save(std::ostream &out) {
         "  user:                              {}\n"
         "  build_type:                        {}\n"
         "  LTO:                               {}\n"
-        "  fast-math:                         {}\n"
+        "  gemm:                              {}\n"
         "  asserts:                           {}\n"
         "  enforce_max_mem_alloc_size:        {}\n"
         "  THREAD_BLOCK_SIZE:                 {}\n"
@@ -238,7 +238,7 @@ void performance_tracker::save(std::ostream &out) {
         username.data(),
         PLSSVM_BUILD_TYPE,
         lto_enabled,
-        fast_math_enabled,
+        use_gemm,
         assert_enabled,
         enforce_max_mem_alloc_size,
         THREAD_BLOCK_SIZE,
