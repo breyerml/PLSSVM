@@ -13,19 +13,20 @@
 #define PLSSVM_BACKENDS_GPU_CSVM_HPP_
 #pragma once
 
-#include "plssvm/constants.hpp"     // plssvm::real_type
-#include "plssvm/csvm.hpp"          // plssvm::csvm
-#include "plssvm/matrix.hpp"        // plssvm::aos_matrix
-#include "plssvm/parameter.hpp"     // plssvm::parameter
-#include "plssvm/solver_types.hpp"  // plssvm::solver_type
+#include "plssvm/constants.hpp"                            // plssvm::real_type
+#include "plssvm/csvm.hpp"                                 // plssvm::csvm
+#include "plssvm/detail/tracking/performance_tracker.hpp"  // PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_ADD_EVENT
+#include "plssvm/matrix.hpp"                               // plssvm::aos_matrix
+#include "plssvm/parameter.hpp"                            // plssvm::parameter
+#include "plssvm/solver_types.hpp"                         // plssvm::solver_type
 
 #include "fmt/core.h"  // fmt::format
 
-#include <algorithm>   // std::min, std::all_of
-#include <cstddef>     // std::size_t
-#include <iostream>    // std::clog, std::endl
-#include <utility>     // std::forward, std::move
-#include <vector>      // std::vector
+#include <algorithm>  // std::min, std::all_of
+#include <cstddef>    // std::size_t
+#include <iostream>   // std::clog, std::endl
+#include <utility>    // std::forward, std::move
+#include <vector>     // std::vector
 
 namespace plssvm::detail {
 
@@ -218,7 +219,9 @@ template <template <typename> typename device_ptr_t, typename queue_t>
         // allocate memory for the values currently not on the device
         device_ptr_type q_red_d{ q_red.size(), devices_[0] };
         q_red_d.copy_to_device(q_red);
+        PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_ADD_EVENT("kernel_start_assembly");
         device_ptr_type kernel_matrix = this->run_assemble_kernel_matrix_explicit(params, data_d, q_red_d, QA_cost);
+        PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_ADD_EVENT("kernel_end_assembly");
 
 #if defined(PLSSVM_USE_GEMM)
         PLSSVM_ASSERT(num_rows_reduced * num_rows_reduced == kernel_matrix.size(),
@@ -245,6 +248,8 @@ void gpu_csvm<device_ptr_t, queue_t>::blas_level_3(const solver_type solver, con
     PLSSVM_ASSERT(!C.empty(), "The C matrix may not be empty!");
     PLSSVM_ASSERT(solver != solver_type::automatic, "An explicit solver type must be provided instead of solver_type::automatic!");
 
+    static int blas_count = 0;
+
     if (solver == solver_type::cg_explicit) {
         const device_ptr_type &A_d = A.get<device_ptr_type>();
         PLSSVM_ASSERT(!A_d.empty(), "The A matrix may not be empty!");
@@ -258,13 +263,17 @@ void gpu_csvm<device_ptr_t, queue_t>::blas_level_3(const solver_type solver, con
         device_ptr_type C_d{ C.shape(), devices_[0] };
         C_d.copy_to_device(C);
 
+        PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_ADD_EVENT(fmt::format("kernel_start_blas_{}", blas_count));
         this->run_blas_level_3_kernel_explicit(num_rows, num_rhs, num_rows, alpha, A_d, B_d, beta, C_d);
+        PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_ADD_EVENT(fmt::format("kernel_end_blas_{}", blas_count));
 
         C_d.copy_to_host(C);
     } else {
         // TODO: implement for other solver types
         throw exception{ fmt::format("The GEMM calculation using the {} CG variation is currently not implemented!", solver) };
     }
+
+    ++blas_count;
 }
 
 //***************************************************//

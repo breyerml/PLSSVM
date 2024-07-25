@@ -134,10 +134,21 @@ target_compile_options(${PLSSVM_BASE_LIBRARY_NAME} PUBLIC
         # /wd4127: ignore "conditional expression is constant" from {fmt} ranges.h header
 )
 ## enable additional optimization flags only in RELEASE mode
+
+## enable fast math flags
 target_compile_options(${PLSSVM_BASE_LIBRARY_NAME} PUBLIC
-        $<$<AND:$<OR:$<CONFIG:RELEASE>,$<CONFIG:RELWITHDEBINFO>>,$<COMPILE_LANG_AND_ID:CXX,GNU,Clang>>:-ffast-math -march=native>
+        $<$<AND:$<OR:$<CONFIG:RELEASE>,$<CONFIG:RELWITHDEBINFO>>,$<COMPILE_LANG_AND_ID:CXX,GNU,Clang>>:-ffast-math>
         $<$<AND:$<OR:$<CONFIG:RELEASE>,$<CONFIG:RELWITHDEBINFO>>,$<COMPILE_LANG_AND_ID:CXX,MSVC>>:/fp:fast>
 )
+## set march native flag based on target architecture
+if (${CMAKE_SYSTEM_PROCESSOR} MATCHES "ppc64le")
+    message(STATUS "Compiling for ppc64le: setting -mcpu=native")
+    target_compile_options(${PLSSVM_BASE_LIBRARY_NAME} PUBLIC $<$<AND:$<OR:$<CONFIG:RELEASE>,$<CONFIG:RELWITHDEBINFO>>,$<COMPILE_LANG_AND_ID:CXX,GNU,Clang>>:-mcpu=native>)
+elseif (${CMAKE_SYSTEM_PROCESSOR} MATCHES "x86_64")
+    message(STATUS "Compiling for x86_64: setting -march=native")
+    target_compile_options(${PLSSVM_BASE_LIBRARY_NAME} PUBLIC $<$<AND:$<OR:$<CONFIG:RELEASE>,$<CONFIG:RELWITHDEBINFO>>,$<COMPILE_LANG_AND_ID:CXX,GNU,Clang>>:-march=native>)
+endif ()
+
 target_compile_definitions(${PLSSVM_BASE_LIBRARY_NAME} PUBLIC
         $<$<COMPILE_LANG_AND_ID:CXX,MSVC>:NOMINMAX>
 )
