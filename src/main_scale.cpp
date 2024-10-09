@@ -13,12 +13,11 @@
 #include "plssvm/detail/cmd/data_set_variants.hpp"         // plssvm::detail::cmd::data_set_factory
 #include "plssvm/detail/cmd/parser_scale.hpp"              // plssvm::detail::cmd::parser_scale
 #include "plssvm/detail/logger.hpp"                        // plssvm::detail::log, plssvm::verbosity_level
-#include "plssvm/detail/tracking/performance_tracker.hpp"  // plssvm::detail::tracking::tracking_entry,PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_SAVE
+#include "plssvm/detail/tracking/performance_tracker.hpp"  // plssvm::detail::tracking::tracking_entry, PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_SAVE, PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_ADD_HWS_ENTRY
 #include "plssvm/matrix.hpp"                               // plssvm::matrix
 
 #if defined(PLSSVM_HARDWARE_SAMPLING_ENABLED)
-    #include "plssvm/detail/tracking/hardware_sampler.hpp"          // plssvm::detail::tracking::hardware_sampler
-    #include "plssvm/detail/tracking/hardware_sampler_factory.hpp"  // plssvm::detail::tracking::make_hardware_sampler
+    #include "hws/system_hardware_sampler.hpp" // hws::system_hardware_sampler
 #endif
 
 #include <chrono>     // std::chrono::{steady_clock, duration}
@@ -42,17 +41,13 @@ int main(int argc, char *argv[]) {
                             "\ntask: scaling\n{}\n",
                             plssvm::detail::tracking::tracking_entry{ "parameter", "", cmd_parser });
 
-        // create data set and scale
-        std::visit([&](auto &&data) {
-        // initialize hardware sampling -> plssvm-scale is CPU only!
 #if defined(PLSSVM_HARDWARE_SAMPLING_ENABLED)
-            // initialize hardware sampling
-            std::vector<std::unique_ptr<plssvm::detail::tracking::hardware_sampler>> sampler =
-                plssvm::detail::tracking::create_hardware_sampler(plssvm::target_platform::cpu, std::size_t{ 1 }, PLSSVM_HARDWARE_SAMPLING_INTERVAL);
-            // start sampling
-            std::for_each(sampler.begin(), sampler.end(), std::mem_fn(&plssvm::detail::tracking::hardware_sampler::start_sampling));
+        hws::system_hardware_sampler sampler{ PLSSVM_HARDWARE_SAMPLING_INTERVAL };
+        sampler.start_sampling();
 #endif
 
+        // create data set and scale
+        std::visit([&](auto &&data) {
             // write scaled data to output file
             if (!cmd_parser.scaled_filename.empty()) {
                 data.save(cmd_parser.scaled_filename, cmd_parser.format);
@@ -80,17 +75,13 @@ int main(int argc, char *argv[]) {
             if (!cmd_parser.save_filename.empty() && data.scaling_factors().has_value()) {
                 data.scaling_factors()->get().save(cmd_parser.save_filename);
             }
-
-#if defined(PLSSVM_HARDWARE_SAMPLING_ENABLED)
-            // stop sampling
-            std::for_each(sampler.begin(), sampler.end(), std::mem_fn(&plssvm::detail::tracking::hardware_sampler::stop_sampling));
-            // write samples to yaml file
-            std::for_each(sampler.cbegin(), sampler.cend(), [&](const std::unique_ptr<plssvm::detail::tracking::hardware_sampler> &s) {
-                PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_ADD_HARDWARE_SAMPLER_ENTRY(*s);
-            });
-#endif
         },
                    plssvm::detail::cmd::data_set_factory(cmd_parser));
+
+#if defined(PLSSVM_HARDWARE_SAMPLING_ENABLED)
+        sampler.stop_sampling();
+        PLSSVM_DETAIL_TRACKING_PERFORMANCE_TRACKER_ADD_HWS_ENTRY(sampler);
+#endif
 
         const std::chrono::steady_clock::time_point end_time = std::chrono::steady_clock::now();
         plssvm::detail::log(plssvm::verbosity_level::full | plssvm::verbosity_level::timing,
